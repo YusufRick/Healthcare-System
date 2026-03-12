@@ -1,0 +1,55 @@
+drug_a,drug_b,severity,description,recommendation
+Alcohol,Gabapentin,MODERATE,Potential interaction between Alcohol and Gabapentin,"Review combination, monitor patient response, and check current label guidance."
+Alcohol,Metformin,MODERATE,Potential interaction between Alcohol and Metformin,"Review combination, monitor patient response, and check current label guidance."
+Alcohol,Oxycodone,MODERATE,Potential interaction between Alcohol and Oxycodone,"Review combination, monitor patient response, and check current label guidance."
+Allopurinol,Amoxicillin,MODERATE,Potential interaction between Allopurinol and Amoxicillin,"Review combination, monitor patient response, and check current label guidance."
+Amiodarone,Simvastatin,MODERATE,Potential interaction between Amiodarone and Simvastatin,"Review combination, monitor patient response, and check current label guidance."
+Amlodipine,Ketoconazole,MODERATE,Potential interaction between Amlodipine and Ketoconazole,"Review combination, monitor patient response, and check current label guidance."
+Amlodipine,Simvastatin,MODERATE,Amlodipine can increase simvastatin levels,Use lower simvastatin dose and monitor for myopathy
+Amoxicillin,Warfarin,MODERATE,Possible INR increase and bleeding risk,Monitor INR after antibiotic initiation or dose change
+Antacids,Azithromycin,MODERATE,Potential interaction between Antacids and Azithromycin,"Review combination, monitor patient response, and check current label guidance."
+Aspirin,Ibuprofen,MODERATE,Reduced antiplatelet effect of aspirin and increased GI toxicity,Separate dosing if required and review GI risk
+Aspirin,Methotrexate,MODERATE,Potential interaction between Aspirin and Methotrexate,"Review combination, monitor patient response, and check current label guidance."
+Aspirin,NSAIDs,MODERATE,Potential interaction between Aspirin and NSAIDs,"Review combination, monitor patient response, and check current label guidance."
+Aspirin,Warfarin,HIGH,Increased bleeding risk,Avoid routine co-prescribing or monitor closely for bleeding and INR changes
+Atorvastatin,Clarithromycin,HIGH,Raised statin exposure and myopathy risk,Avoid combination or hold statin while macrolide is used
+Atorvastatin,Gemfibrozil,MODERATE,Potential interaction between Atorvastatin and Gemfibrozil,"Review combination, monitor patient response, and check current label guidance."
+Atorvastatin,Grapefruit juice,MODERATE,Potential interaction between Atorvastatin and Grapefruit juice,"Review combination, monitor patient response, and check current label guidance."
+Azithromycin,Digoxin,MODERATE,Potential interaction between Azithromycin and Digoxin,"Review combination, monitor patient response, and check current label guidance."
+Azithromycin,Warfarin,MODERATE,Possible INR increase and bleeding risk,Monitor INR during and shortly after therapy
+Benzodiazepines,Oxycodone,MODERATE,Potential interaction between Benzodiazepines and Oxycodone,"Review combination, monitor patient response, and check current label guidance."
+Carbamazepine,Tramadol,MODERATE,Potential interaction between Carbamazepine and Tramadol,"Review combination, monitor patient response, and check current label guidance."
+Clarithromycin,Simvastatin,HIGH,Raised statin exposure and rhabdomyolysis risk,Contraindicated or use an alternative antibiotic/statin
+Clonidine,Metoprolol,MODERATE,Potential interaction between Clonidine and Metoprolol,"Review combination, monitor patient response, and check current label guidance."
+Clopidogrel,Omeprazole,MODERATE,Reduced antiplatelet activation of clopidogrel,Consider an alternative acid suppressant if clinically appropriate
+CNS depressants,Oxycodone,MODERATE,Potential interaction between CNS depressants and Oxycodone,"Review combination, monitor patient response, and check current label guidance."
+Contrast dye,Metformin,MODERATE,Potential interaction between Contrast dye and Metformin,"Review combination, monitor patient response, and check current label guidance."
+Digoxin,Hydrochlorothiazide,MODERATE,Potential interaction between Digoxin and Hydrochlorothiazide,"Review combination, monitor patient response, and check current label guidance."
+Fluoxetine,MAOIs,MODERATE,Potential interaction between Fluoxetine and MAOIs,"Review combination, monitor patient response, and check current label guidance."
+Fluoxetine,Metoprolol,MODERATE,CYP inhibition can increase beta-blocker exposure,"Monitor heart rate, blood pressure, and beta-blocker adverse effects"
+Fluoxetine,Pimozide,MODERATE,Potential interaction between Fluoxetine and Pimozide,"Review combination, monitor patient response, and check current label guidance."
+Fluoxetine,Thioridazine,MODERATE,Potential interaction between Fluoxetine and Thioridazine,"Review combination, monitor patient response, and check current label guidance."
+Fluoxetine,Tramadol,HIGH,Serotonergic toxicity and seizure risk,Avoid if possible; monitor for serotonin syndrome
+Gabapentin,Opioids,MODERATE,Potential interaction between Gabapentin and Opioids,"Review combination, monitor patient response, and check current label guidance."
+Gabapentin,Oxycodone,HIGH,Additive CNS and respiratory depression risk,Use the lowest effective doses and monitor sedation/respiration
+Hydrochlorothiazide,Lithium,HIGH,Lithium levels may rise significantly,Avoid or monitor lithium concentration closely
+Hydrochlorothiazide,NSAIDs,MODERATE,Potential interaction between Hydrochlorothiazide and NSAIDs,"Review combination, monitor patient response, and check current label guidance."
+Ibuprofen,Lisinopril,MODERATE,Reduced antihypertensive effect and renal impairment risk,Monitor blood pressure and renal function
+Ibuprofen,Lithium,MODERATE,Potential interaction between Ibuprofen and Lithium,"Review combination, monitor patient response, and check current label guidance."
+Ibuprofen,NSAIDs,MODERATE,Potential interaction between Ibuprofen and NSAIDs,"Review combination, monitor patient response, and check current label guidance."
+Ibuprofen,Warfarin,HIGH,Additive anticoagulant and GI bleeding risk,Avoid when possible; monitor INR and bleeding symptoms closely
+Itraconazole,Simvastatin,MODERATE,Potential interaction between Itraconazole and Simvastatin,"Review combination, monitor patient response, and check current label guidance."
+Lisinopril,NSAIDs,MODERATE,Potential interaction between Lisinopril and NSAIDs,"Review combination, monitor patient response, and check current label guidance."
+Lisinopril,Potassium supplements,MODERATE,Potential interaction between Lisinopril and Potassium supplements,"Review combination, monitor patient response, and check current label guidance."
+Lisinopril,Spironolactone,MODERATE,Potential interaction between Lisinopril and Spironolactone,"Review combination, monitor patient response, and check current label guidance."
+Lithium,Losartan,MODERATE,Potential interaction between Lithium and Losartan,"Review combination, monitor patient response, and check current label guidance."
+Losartan,Potassium-sparing diuretics,MODERATE,Potential interaction between Losartan and Potassium-sparing diuretics,"Review combination, monitor patient response, and check current label guidance."
+MAOIs,Sertraline,MODERATE,Potential interaction between MAOIs and Sertraline,"Review combination, monitor patient response, and check current label guidance."
+MAOIs,Tramadol,MODERATE,Potential interaction between MAOIs and Tramadol,"Review combination, monitor patient response, and check current label guidance."
+Methotrexate,Omeprazole,MODERATE,Potential interaction between Methotrexate and Omeprazole,"Review combination, monitor patient response, and check current label guidance."
+Metoprolol,Verapamil,MODERATE,Potential interaction between Metoprolol and Verapamil,"Review combination, monitor patient response, and check current label guidance."
+NSAIDs,Warfarin,MODERATE,Potential interaction between NSAIDs and Warfarin,"Review combination, monitor patient response, and check current label guidance."
+Pimozide,Sertraline,MODERATE,Potential interaction between Pimozide and Sertraline,"Review combination, monitor patient response, and check current label guidance."
+Sertraline,Tramadol,HIGH,Serotonergic toxicity and seizure risk,Avoid if possible; monitor for serotonin syndrome
+SSRIs,Tramadol,MODERATE,Potential interaction between SSRIs and Tramadol,"Review combination, monitor patient response, and check current label guidance."
+Vitamin K,Warfarin,MODERATE,Potential interaction between Vitamin K and Warfarin,"Review combination, monitor patient response, and check current label guidance."

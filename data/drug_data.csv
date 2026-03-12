@@ -1,0 +1,20 @@
+name,standard_dosage,max_daily_dose,contraindications,interactions,allergy_tags,drug_class
+Aspirin,4000 mg/day,4000 mg/day,"pregnancy, bleeding disorders, stomach bleeding, asthma","Warfarin, Ibuprofen, NSAIDs, Methotrexate","aspirin, nsaid, salicylate",NSAID
+Warfarin,10 mg/day,10 mg/day,"pregnancy, liver disease, active bleeding","Aspirin, NSAIDs, Ibuprofen, Amoxicillin, Azithromycin, Vitamin K",warfarin,Anticoagulant
+Ibuprofen,3200 mg/day,3200 mg/day,"peptic ulcer, chronic kidney disease, GI bleeding","Aspirin, Warfarin, Lithium, Lisinopril, NSAIDs","ibuprofen, nsaid, propionic acid nsaid",NSAID
+Lisinopril,40 mg/day,40 mg/day,"pregnancy, angioedema history","Potassium supplements, NSAIDs, Spironolactone, Ibuprofen","ace inhibitor, lisinopril",ACE inhibitor
+Metformin,2000 mg/day,2000 mg/day,"severe renal impairment, liver disease, metabolic acidosis","Contrast dye, Alcohol","metformin, biguanide",Biguanide
+Atorvastatin,80 mg/day,80 mg/day,"active liver disease, pregnancy","Clarithromycin, Grapefruit juice, Gemfibrozil","statin, atorvastatin",Statin
+Simvastatin,40 mg/day,40 mg/day,"liver disease, pregnancy, concurrent gemfibrozil","Itraconazole, Clarithromycin, Amiodarone, Amlodipine","statin, simvastatin",Statin
+Metoprolol,200 mg/day,200 mg/day,"severe bradycardia, acute heart failure","Fluoxetine, Verapamil, Clonidine","beta blocker, metoprolol",Beta blocker
+Amlodipine,10 mg/day,10 mg/day,severe hypotension,"Ketoconazole, Simvastatin","amlodipine, calcium channel blocker",Calcium channel blocker
+Losartan,100 mg/day,100 mg/day,pregnancy,"Potassium-sparing diuretics, Lithium","arb, losartan",ARB
+Hydrochlorothiazide,50 mg/day,50 mg/day,"anuria, electrolyte depletion","Lithium, NSAIDs, Digoxin","hydrochlorothiazide, sulfa, sulfonamide",Thiazide diuretic
+Sertraline,200 mg/day,200 mg/day,MAOI use within 14 days,"MAOIs, Pimozide, Tramadol","sertraline, ssri",SSRI
+Fluoxetine,80 mg/day,80 mg/day,"MAOI use, thioridazine use","MAOIs, Pimozide, Thioridazine, Metoprolol, Tramadol","fluoxetine, ssri",SSRI
+Omeprazole,40 mg/day,40 mg/day,concurrent rilpivirine,"Clopidogrel, Methotrexate","omeprazole, ppi",PPI
+Gabapentin,3600 mg/day,3600 mg/day,severe respiratory depression,"Alcohol, Opioids","gabapentin, gabapentinoid",Gabapentinoid
+Tramadol,400 mg/day,400 mg/day,"MAOI use, opioid dependence, seizure disorder","SSRIs, MAOIs, Carbamazepine, Sertraline, Fluoxetine","tramadol, opioid",Opioid
+Oxycodone,Individualized,Individualized,"severe asthma, paralytic ileus","Alcohol, Benzodiazepines, CNS depressants, Gabapentin","oxycodone, opioid",Opioid
+Amoxicillin,3000 mg/day,3000 mg/day,penicillin allergy,"Allopurinol, Warfarin","amoxicillin, penicillin, beta-lactam",Penicillin antibiotic
+Azithromycin,500 mg/day,500 mg/day,"cholestatic jaundice, QT prolongation history","Warfarin, Digoxin, Antacids","azithromycin, macrolide",Macrolide antibiotic
