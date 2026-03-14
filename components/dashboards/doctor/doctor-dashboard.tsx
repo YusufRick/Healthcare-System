@@ -32,6 +32,7 @@ const AVAILABLE_MEDICATIONS = [
   "Omeprazole",
   "Ciprofloxacin",
   "Prednisone",
+  "Paracetamol"
 ]
 
 function usePatientsData() {
