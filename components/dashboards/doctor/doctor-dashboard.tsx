@@ -1,10 +1,19 @@
 "use client"
 
-import React from "react"
-
-import { useState, useCallback } from "react"
+import React, { useState, useCallback } from "react"
 import { toast } from "sonner"
-import { Stethoscope, Plus, ClipboardList, Search, X, RefreshCw, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react"
+import {
+  Stethoscope,
+  Plus,
+  ClipboardList,
+  Search,
+  X,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Loader2,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -15,8 +24,22 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { RiskDisplay } from "@/components/risk/risk-display"
-import { getPatientList, runRiskAssessment, submitPrescription, getDoctorPrescriptions, getDoctorRefillRequests, approveRefillRequest, rejectRefillRequest } from "@/lib/actions"
-import type { RiskAssessment, Prescription, MedicationItem, RefillRequest } from "@/lib/types"
+import {
+  getPatientList,
+  runRiskAssessment,
+  submitPrescription,
+  getDoctorPrescriptions,
+  getDoctorRefillRequests,
+  approveRefillRequest,
+  rejectRefillRequest,
+} from "@/lib/actions"
+import type {
+  RiskAssessment,
+  Prescription,
+  MedicationItem,
+  RefillRequest,
+  PrescribedMedication,
+} from "@/lib/types"
 import useSWR, { useSWRConfig } from "swr"
 
 const AVAILABLE_MEDICATIONS = [
@@ -32,14 +55,21 @@ const AVAILABLE_MEDICATIONS = [
   "Omeprazole",
   "Ciprofloxacin",
   "Prednisone",
-  "Paracetamol"
+  "Paracetamol",
 ]
+
+type PatientSummary = {
+  id: string
+  name: string
+  email: string
+  allergies?: string[]
+}
 
 function usePatientsData() {
   return useSWR("doctor-patients", async () => {
     const res = await getPatientList()
     if (res.error) throw new Error(res.error)
-    return res.patients || []
+    return (res.patients || []) as PatientSummary[]
   })
 }
 
@@ -47,7 +77,7 @@ function usePrescriptionsData() {
   return useSWR("doctor-prescriptions", async () => {
     const res = await getDoctorPrescriptions()
     if (res.error) throw new Error(res.error)
-    return res.prescriptions || []
+    return (res.prescriptions || []) as Prescription[]
   })
 }
 
@@ -55,7 +85,7 @@ function useRefillRequestsData() {
   return useSWR("doctor-refill-requests", async () => {
     const res = await getDoctorRefillRequests()
     if (res.error) throw new Error(res.error)
-    return res.requests || []
+    return (res.requests || []) as RefillRequest[]
   })
 }
 
@@ -71,8 +101,7 @@ export function DoctorDashboard() {
   const [riskResult, setRiskResult] = useState<RiskAssessment | null>(null)
   const [loading, setLoading] = useState(false)
   const [assessing, setAssessing] = useState(false)
-  
-  // Refill request state
+
   const [selectedRefillRequest, setSelectedRefillRequest] = useState<RefillRequest | null>(null)
   const [showRejectDialog, setShowRejectDialog] = useState(false)
   const [rejectionReason, setRejectionReason] = useState("")
@@ -87,7 +116,6 @@ export function DoctorDashboard() {
       updated[index] = { ...updated[index], [field]: value }
       return updated
     })
-    // Clear risk result when medications change
     setRiskResult(null)
   }
 
@@ -103,10 +131,12 @@ export function DoctorDashboard() {
 
   const handleAssessRisk = useCallback(async () => {
     const medNames = medications.filter((m) => m.name).map((m) => m.name)
+
     if (medNames.length === 0 || !selectedPatientId) {
       toast.error("Select a patient and add at least one medication first")
       return
     }
+
     setAssessing(true)
     try {
       const res = await runRiskAssessment(medNames, selectedPatientId)
@@ -114,7 +144,7 @@ export function DoctorDashboard() {
         toast.error(res.error)
       } else if (res.assessment) {
         setRiskResult(res.assessment)
-        if (res.assessment.level === "High") {
+        if (res.assessment.level === "HIGH") {
           toast.warning("High risk detected. Review alerts before confirming.")
         }
       }
@@ -125,14 +155,27 @@ export function DoctorDashboard() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+
     const validMeds = medications.filter((m) => m.name && m.dosage)
+
     if (!selectedPatientId || validMeds.length === 0) {
       toast.error("Please select a patient and add at least one medication with dosage")
       return
     }
+
+    const formattedMeds: PrescribedMedication[] = validMeds.map((m, index) => ({
+      medId: `manual-${index}`,
+      name: m.name,
+      dosage: m.dosage,
+      frequency: "",
+      duration: "",
+      quantity: 0,
+      instructions: "",
+    }))
+
     setLoading(true)
     try {
-      const res = await submitPrescription(selectedPatientId, validMeds, notes, riskResult)
+      const res = await submitPrescription(selectedPatientId, formattedMeds, notes, riskResult)
       if (res.error) {
         toast.error(res.error)
       } else {
@@ -179,6 +222,7 @@ export function DoctorDashboard() {
       toast.error("Please provide a reason for rejection")
       return
     }
+
     setProcessingRefill(selectedRefillRequest.id)
     try {
       const res = await rejectRefillRequest(selectedRefillRequest.id, rejectionReason.trim())
@@ -237,7 +281,13 @@ export function DoctorDashboard() {
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div className="space-y-2">
                     <Label>Patient</Label>
-                    <Select value={selectedPatientId} onValueChange={(v) => { setSelectedPatientId(v); setRiskResult(null) }}>
+                    <Select
+                      value={selectedPatientId}
+                      onValueChange={(v) => {
+                        setSelectedPatientId(v)
+                        setRiskResult(null)
+                      }}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Select a patient" />
                       </SelectTrigger>
@@ -261,7 +311,6 @@ export function DoctorDashboard() {
                     )}
                   </div>
 
-                  {/* Medications List */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <Label>Medications ({filledMedications.length} added)</Label>
@@ -281,7 +330,9 @@ export function DoctorDashboard() {
                               </SelectTrigger>
                               <SelectContent>
                                 {AVAILABLE_MEDICATIONS.map((m) => (
-                                  <SelectItem key={m} value={m}>{m}</SelectItem>
+                                  <SelectItem key={m} value={m}>
+                                    {m}
+                                  </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -330,7 +381,11 @@ export function DoctorDashboard() {
                       onClick={handleAssessRisk}
                       disabled={assessing || filledMedications.length === 0 || !selectedPatientId}
                     >
-                      {assessing ? "Assessing..." : `Run Risk Assessment (${filledMedications.length} drug${filledMedications.length !== 1 ? "s" : ""})`}
+                      {assessing
+                        ? "Assessing..."
+                        : `Run Risk Assessment (${filledMedications.length} drug${
+                            filledMedications.length !== 1 ? "s" : ""
+                          })`}
                     </Button>
                     <Button type="submit" className="flex-1" disabled={loading}>
                       {loading ? "Confirming..." : "Confirm Prescription"}
@@ -349,7 +404,8 @@ export function DoctorDashboard() {
                     <Search className="mb-3 h-10 w-10 text-muted-foreground" />
                     <p className="font-medium text-card-foreground">No Risk Assessment Yet</p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Select a patient, add medications, then click &ldquo;Run Risk Assessment&rdquo; to check for allergy conflicts and drug-drug interactions.
+                      Select a patient, add medications, then click &ldquo;Run Risk Assessment&rdquo; to check for
+                      allergy conflicts and drug-drug interactions.
                     </p>
                   </CardContent>
                 </Card>
@@ -378,7 +434,8 @@ export function DoctorDashboard() {
                       <div>
                         <CardTitle className="text-base">{request.patientName}</CardTitle>
                         <CardDescription>
-                          Requested on {new Date(request.createdAt).toLocaleDateString()} at {new Date(request.createdAt).toLocaleTimeString()}
+                          Requested on {new Date(request.createdAt).toLocaleDateString()} at{" "}
+                          {new Date(request.createdAt).toLocaleTimeString()}
                         </CardDescription>
                       </div>
                       <Badge className="bg-[hsl(37,80%,92%)] text-[hsl(37,90%,30%)]">
@@ -389,7 +446,7 @@ export function DoctorDashboard() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="rounded-lg bg-muted p-3">
-                      <p className="text-sm font-medium text-foreground mb-2">Medications Requested:</p>
+                      <p className="mb-2 text-sm font-medium text-foreground">Medications Requested:</p>
                       <div className="space-y-1">
                         {request.medications.map((med, idx) => (
                           <div key={idx} className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -400,9 +457,9 @@ export function DoctorDashboard() {
                         ))}
                       </div>
                     </div>
-                    
+
                     <div className="rounded-lg border border-border p-3">
-                      <p className="text-xs text-muted-foreground mb-1">Patient&apos;s reason for refill:</p>
+                      <p className="mb-1 text-xs text-muted-foreground">Patient&apos;s reason for refill:</p>
                       <p className="text-sm text-foreground">{request.reason}</p>
                     </div>
 
@@ -441,7 +498,6 @@ export function DoctorDashboard() {
         </TabsContent>
       </Tabs>
 
-      {/* Reject Refill Dialog */}
       <Dialog open={showRejectDialog} onOpenChange={setShowRejectDialog}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -454,7 +510,7 @@ export function DoctorDashboard() {
             <div className="space-y-4">
               <div className="rounded-lg bg-muted p-3">
                 <p className="text-sm font-medium text-foreground">{selectedRefillRequest.patientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">
+                <p className="mt-1 text-xs text-muted-foreground">
                   {selectedRefillRequest.medications.map((m) => m.name).join(", ")}
                 </p>
               </div>
@@ -505,9 +561,7 @@ function PrescriptionHistory({ prescriptions }: { prescriptions: Prescription[] 
         <CardContent className="flex flex-col items-center justify-center py-12 text-center">
           <ClipboardList className="mb-3 h-10 w-10 text-muted-foreground" />
           <p className="font-medium text-card-foreground">No Prescriptions Yet</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Create your first prescription to see it here.
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">Create your first prescription to see it here.</p>
         </CardContent>
       </Card>
     )
@@ -531,9 +585,7 @@ function PrescriptionHistory({ prescriptions }: { prescriptions: Prescription[] 
                 ))}
               </div>
               {rx.notes && <p className="text-xs text-muted-foreground">{rx.notes}</p>}
-              <p className="text-xs text-muted-foreground">
-                {new Date(rx.createdAt).toLocaleString()}
-              </p>
+              <p className="text-xs text-muted-foreground">{new Date(rx.createdAt).toLocaleString()}</p>
             </div>
             {rx.riskAssessment && <RiskDisplay assessment={rx.riskAssessment} compact />}
           </CardContent>
@@ -552,6 +604,7 @@ function StatusBadge({ status }: { status: string }) {
     collected: "bg-[hsl(152,50%,92%)] text-[hsl(152,60%,25%)]",
     expired: "bg-[hsl(0,70%,95%)] text-destructive",
   }
+
   return (
     <Badge className={`text-xs capitalize ${variants[status] || ""}`}>
       {status.replace("_", " ")}

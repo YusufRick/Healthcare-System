@@ -39,7 +39,7 @@ export const ALLERGY_DRUG_CLASS_MAP: Record<string, string[]> = {
 
 const medications: Medication[] = [
   {
-    medId: "med-001",
+    id: "med-001",
     name: "Amoxicillin",
     category: "Antibiotic",
     standardDosages: ["250mg", "500mg", "875mg"],
@@ -49,7 +49,7 @@ const medications: Medication[] = [
     sideEffects: ["Nausea", "Diarrhea", "Rash"],
   },
   {
-    medId: "med-002",
+    id: "med-002",
     name: "Ibuprofen",
     category: "NSAID",
     standardDosages: ["200mg", "400mg", "600mg", "800mg"],
@@ -59,7 +59,7 @@ const medications: Medication[] = [
     sideEffects: ["Stomach upset", "Dizziness", "Headache"],
   },
   {
-    medId: "med-003",
+    id: "med-003",
     name: "Metformin",
     category: "Antidiabetic",
     standardDosages: ["500mg", "850mg", "1000mg"],
@@ -69,7 +69,7 @@ const medications: Medication[] = [
     sideEffects: ["Nausea", "Diarrhea", "Metallic taste"],
   },
   {
-    medId: "med-004",
+    id: "med-004",
     name: "Lisinopril",
     category: "ACE Inhibitor",
     standardDosages: ["2.5mg", "5mg", "10mg", "20mg", "40mg"],
@@ -79,7 +79,7 @@ const medications: Medication[] = [
     sideEffects: ["Dry cough", "Dizziness", "Hyperkalemia"],
   },
   {
-    medId: "med-005",
+    id: "med-005",
     name: "Atorvastatin",
     category: "Statin",
     standardDosages: ["10mg", "20mg", "40mg", "80mg"],
@@ -89,7 +89,7 @@ const medications: Medication[] = [
     sideEffects: ["Muscle pain", "Headache", "Nausea"],
   },
   {
-    medId: "med-006",
+    id: "med-006",
     name: "Omeprazole",
     category: "Proton Pump Inhibitor",
     standardDosages: ["10mg", "20mg", "40mg"],
@@ -99,7 +99,7 @@ const medications: Medication[] = [
     sideEffects: ["Headache", "Nausea", "Abdominal pain"],
   },
   {
-    medId: "med-007",
+    id: "med-007",
     name: "Aspirin",
     category: "NSAID/Antiplatelet",
     standardDosages: ["81mg", "325mg", "500mg"],
@@ -109,7 +109,7 @@ const medications: Medication[] = [
     sideEffects: ["GI bleeding", "Bruising", "Tinnitus"],
   },
   {
-    medId: "med-008",
+    id: "med-008",
     name: "Warfarin",
     category: "Anticoagulant",
     standardDosages: ["1mg", "2mg", "2.5mg", "5mg", "7.5mg", "10mg"],
@@ -119,7 +119,7 @@ const medications: Medication[] = [
     sideEffects: ["Bleeding", "Bruising", "Hair loss"],
   },
   {
-    medId: "med-009",
+    id: "med-009",
     name: "Prednisone",
     category: "Corticosteroid",
     standardDosages: ["5mg", "10mg", "20mg", "50mg"],
@@ -129,7 +129,7 @@ const medications: Medication[] = [
     sideEffects: ["Weight gain", "Mood changes", "Insomnia"],
   },
   {
-    medId: "med-010",
+    id: "med-010",
     name: "Ciprofloxacin",
     category: "Antibiotic",
     standardDosages: ["250mg", "500mg", "750mg"],
@@ -147,7 +147,6 @@ const users: User[] = [
     id: "doc-1",
     name: "Dr. Sarah Chen",
     email: "doctor@demo.com",
-    password: "password123",
     role: "doctor",
     createdAt: new Date().toISOString(),
   },
@@ -155,7 +154,7 @@ const users: User[] = [
     id: "clinic-1",
     name: "Maria Garcia",
     email: "clinic@demo.com",
-    password: "password123",
+
     role: "clinic_staff",
     createdAt: new Date().toISOString(),
   },
@@ -163,7 +162,6 @@ const users: User[] = [
     id: "pharm-1",
     name: "James Wilson",
     email: "pharmacy@demo.com",
-    password: "password123",
     role: "pharmacy_staff",
     createdAt: new Date().toISOString(),
   },
@@ -171,7 +169,6 @@ const users: User[] = [
     id: "pat-1",
     name: "Emily Thompson",
     email: "patient@demo.com",
-    password: "password123",
     role: "patient",
     allergies: ["Penicillin"],
     createdAt: new Date().toISOString(),
@@ -180,7 +177,6 @@ const users: User[] = [
     id: "pat-2",
     name: "Robert Davis",
     email: "robert@demo.com",
-    password: "password123",
     role: "patient",
     allergies: ["NSAID"],
     createdAt: new Date().toISOString(),
@@ -189,7 +185,6 @@ const users: User[] = [
     id: "pat-3",
     name: "Lisa Park",
     email: "lisa@demo.com",
-    password: "password",
     role: "patient",
     allergies: [],
     createdAt: new Date().toISOString(),

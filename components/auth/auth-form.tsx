@@ -1,8 +1,6 @@
 "use client"
 
-import React from "react"
-
-import { useState } from "react"
+import React, { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Shield, LogIn, UserPlus } from "lucide-react"
 import { toast } from "sonner"
@@ -52,7 +50,7 @@ export function AuthForm() {
     e.preventDefault()
     setLoading(true)
     try {
-      const result = await login(loginEmail, loginPassword)
+      const result = await login(loginEmail)
       if (result.error) {
         toast.error(result.error)
       } else if (result.user) {
@@ -69,7 +67,7 @@ export function AuthForm() {
     e.preventDefault()
     setLoading(true)
     try {
-      const result = await register(regName, regEmail, regPassword, regRole, regAllergies)
+      const result = await register(regName, regEmail, regRole, regAllergies)
       if (result.error) {
         toast.error(result.error)
       } else if (result.user) {
@@ -82,10 +80,10 @@ export function AuthForm() {
     }
   }
 
-  async function handleDemoLogin(email: string, password: string) {
+  async function handleDemoLogin(email: string, _password: string) {
     setLoading(true)
     try {
-      const result = await login(email, password)
+      const result = await login(email)
       if (result.error) {
         toast.error(result.error)
       } else if (result.user) {
@@ -112,7 +110,9 @@ export function AuthForm() {
             <Shield className="h-7 w-7 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Healthcare Dispensary System</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">
+              Healthcare Dispensary System
+            </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Secure prescription management with AI-assisted risk assessment
             </p>

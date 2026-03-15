@@ -1,42 +1,80 @@
 export type UserRole = "doctor" | "clinic_staff" | "pharmacy_staff" | "patient"
 
+export type PrescriptionStatus =
+  | "draft"
+  | "confirmed"
+  | "booked"
+  | "ready"
+  | "collected"
+  | "expired"
+
+export type BookingStatus =
+  | "pending"
+  | "locker_assigned"
+  | "ready"
+  | "collected"
+  | "expired"
+
+export type RefillRequestStatus = "pending" | "approved" | "rejected"
+
+export type LockerStatus = "available" | "occupied" | "unlocked"
+
+export type RiskLevel = "LOW" | "MEDIUM" | "HIGH"
+
+export type AlertSeverity = "CRITICAL" | "WARNING" | "INFO"
+
+export type AlertType = "allergy" | "interaction" | "dosage" | "age"
+
+export type BookingCreatorRole = "clinic_staff" | "patient"
+
 export interface User {
   id: string
   name: string
   email: string
-  password: string
   role: UserRole
   allergies?: string[]
   createdAt: string
 }
 
-// Master medication data (separate collection)
+// Master medication data
 export interface Medication {
-  medId: string
+  id: string
   name: string
   category: string
-  standardDosages: string[]       // e.g., ["100mg", "250mg", "500mg"]
-  form: string                    // e.g., "tablet", "capsule", "injection"
+  standardDosages: string[]
+  form: string
   contraindications: string[]
   interactions: string[]
   sideEffects: string[]
 }
 
-// Prescribed medication (embedded in prescription)
+// Medication inside a prescription
 export interface PrescribedMedication {
   medId: string
-  name: string                    // Denormalized for display
-  dosage: string                  // e.g., "500mg"
-  frequency: string               // e.g., "twice daily"
-  duration: string                // e.g., "7 days"
-  quantity: number                // e.g., 14 tablets
-  instructions: string            // e.g., "take with food"
+  name: string
+  dosage: string
+  frequency: string
+  duration: string
+  quantity: number
+  instructions: string
 }
 
-// Legacy type for backward compatibility
+// Legacy type for older risk-check code
 export interface MedicationItem {
   name: string
   dosage: string
+}
+
+export interface RiskAlert {
+  type: AlertType
+  severity: AlertSeverity
+  message: string
+}
+
+export interface RiskAssessment {
+  score: number
+  level: RiskLevel
+  alerts: RiskAlert[]
 }
 
 export interface Prescription {
@@ -44,32 +82,12 @@ export interface Prescription {
   doctorId: string
   patientId: string
   patientName: string
-  clinicId: string
+  clinicId?: string
   medications: PrescribedMedication[]
-  notes: string                   // General prescription notes from doctor
+  notes: string
   riskAssessment: RiskAssessment | null
-  status: "draft" | "confirmed" | "booked" | "ready" | "collected" | "expired"
+  status: PrescriptionStatus
   createdAt: string
-}
-
-export interface RiskAssessment {
-  score: number
-  level: "LOW" | "MEDIUM" | "HIGH" | "Low" | "Medium" | "High"
-  alerts: RiskAlert[]
-}
-
-export type AlertSeverity = "CRITICAL" | "WARNING" | "INFO"
-
-export type AlertType =
-  | "allergy"
-  | "interaction"
-  | "dosage"
-  | "age"
-
-export interface RiskAlert {
-  type: AlertType
-  severity: AlertSeverity
-  message: string
 }
 
 export interface Booking {
@@ -78,15 +96,16 @@ export interface Booking {
   patientEmail: string
   pickupTime: string
   pharmacyName: string
-  clinicStaffId: string
-  status: "pending" | "locker_assigned" | "ready" | "collected" | "expired"
+  createdById: string
+  createdByRole: BookingCreatorRole
+  status: BookingStatus
   createdAt: string
 }
 
 export interface Locker {
   id: string
   label: string
-  status: "available" | "occupied" | "unlocked"
+  status: LockerStatus
   bookingId: string | null
 }
 
@@ -125,7 +144,7 @@ export interface RefillRequest {
   doctorId: string
   medications: PrescribedMedication[]
   reason: string
-  status: "pending" | "approved" | "rejected"
+  status: RefillRequestStatus
   rejectionReason?: string
   createdAt: string
   respondedAt?: string
