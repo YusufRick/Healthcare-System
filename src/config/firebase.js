@@ -3,12 +3,13 @@
 // Currently using mock auth service for development
 
 
-// import { initializeApp, getApps } from "firebase/app"
-// import { getAuth } from "firebase/auth"
+//import { initializeApp, getApps } from "firebase/app"
+import { getAuth } from "firebase/auth"
 // import { getFirestore } from "firebase/firestore"
 
 import { initializeApp } from "firebase/app"
 import { getFirestore } from "firebase/firestore"
+import { get } from "http";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCzyz3lIJD_49zC_FFeqQHfidNNxf2ej-w",
@@ -20,8 +21,14 @@ const firebaseConfig = {
   measurementId: "G-8J6599Y8JB"
 }
 const app = initializeApp(firebaseConfig)
+const db = getFirestore(app);
+const auth = getAuth(app)
 
-export const db = getFirestore(app)
+export { auth, db }
+export default app
+
+
+
 
 // const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0]
 

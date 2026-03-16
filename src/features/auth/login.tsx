@@ -35,7 +35,7 @@ export function LoginForm() {
     e.preventDefault()
     setLoading(true)
     try {
-      const result = await login(email, password)
+      const result = await login(email)
       if (result.error) {
         toast.error(result.error)
       } else if (result.user) {
@@ -51,7 +51,7 @@ export function LoginForm() {
   async function handleDemoLogin(demoEmail: string, demoPassword: string) {
     setLoading(true)
     try {
-      const result = await login(demoEmail, demoPassword)
+      const result = await login(demoEmail)
       if (result.error) {
         toast.error(result.error)
       } else if (result.user) {

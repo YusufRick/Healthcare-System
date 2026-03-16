@@ -1,7 +1,7 @@
 "use server"
 
 import { cookies } from "next/headers"
-import { db } from "../src/config/firebase"
+import { db,auth } from "../src/config/firebase"
 import {
   collection,
   query,

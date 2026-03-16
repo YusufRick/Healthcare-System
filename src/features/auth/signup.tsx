@@ -55,7 +55,7 @@ export function SignupForm() {
 
     setLoading(true)
     try {
-      const result = await register(name, email, password, role, allergies)
+      const result = await register(name, email, role, allergies)
       if (result.error) {
         toast.error(result.error)
       } else if (result.user) {
@@ -97,7 +97,7 @@ export function SignupForm() {
                 <Label htmlFor="name">Full Name</Label>
                 <Input
                   id="name"
-                  placeholder="Dr. Jane Smith"
+                  placeholder="Name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
@@ -109,7 +109,7 @@ export function SignupForm() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="jane@hospital.com"
+                  placeholder="example@hospital.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
