@@ -16,30 +16,35 @@ import {
   markBookingReady,
   generateStaffQR,
 } from "@/lib/actions"
-import type { Prescription, Booking, Locker, QRCode as QRCodeType } from "@/lib/types"
+import type {
+  Prescription,
+  Booking,
+  Locker,
+  QRCode as QRCodeType,
+} from "@/lib/types"
 import useSWR, { useSWRConfig } from "swr"
-
-function usePharmacyData() {
-  return useSWR("pharmacy-bookings", async () => {
-    const res = await getPharmacyBookings()
-    if (res.error) throw new Error(res.error)
-    return res.items || []
-  })
-}
-
-function useLockers() {
-  return useSWR("available-lockers", async () => {
-    const res = await getAvailableLockerList()
-    if (res.error) throw new Error(res.error)
-    return res.lockers || []
-  })
-}
 
 interface PharmacyItem {
   prescription: Prescription
   booking: Booking | null
   locker: Locker | null
   qr: QRCodeType | null
+}
+
+function usePharmacyData() {
+  return useSWR<PharmacyItem[]>("pharmacy-bookings", async () => {
+    const res = await getPharmacyBookings()
+    if (res.error) throw new Error(res.error)
+    return (res.items || []) as PharmacyItem[]
+  })
+}
+
+function useLockers() {
+  return useSWR<Locker[]>("available-lockers", async () => {
+    const res = await getAvailableLockerList()
+    if (res.error) throw new Error(res.error)
+    return (res.lockers || []) as Locker[]
+  })
 }
 
 export function PharmacyDashboard() {
@@ -70,7 +75,7 @@ export function PharmacyDashboard() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {items.map((item: PharmacyItem) => (
+          {items.map((item) => (
             <PharmacyCard
               key={item.prescription.id}
               item={item}
@@ -98,6 +103,7 @@ function PharmacyCard({
 }) {
   const { mutate: globalMutate } = useSWRConfig()
   const { prescription: rx, booking, locker, qr } = item
+
   const [selectedLockerId, setSelectedLockerId] = useState("")
   const [assigning, setAssigning] = useState(false)
   const [marking, setMarking] = useState(false)
@@ -106,6 +112,7 @@ function PharmacyCard({
 
   async function handleAssignLocker() {
     if (!booking || !selectedLockerId) return
+
     setAssigning(true)
     try {
       const res = await assignLockerToBooking(booking.id, selectedLockerId)
@@ -113,6 +120,7 @@ function PharmacyCard({
         toast.error(res.error)
       } else {
         toast.success("Locker assigned successfully")
+        setSelectedLockerId("")
         onUpdate()
         globalMutate("audit-logs")
         globalMutate("email-logs")
@@ -124,6 +132,7 @@ function PharmacyCard({
 
   async function handleMarkReady() {
     if (!booking) return
+
     setMarking(true)
     try {
       const res = await markBookingReady(booking.id)
@@ -142,12 +151,13 @@ function PharmacyCard({
 
   async function handleGenerateStaffQR() {
     if (!booking) return
+
     try {
       const res = await generateStaffQR(booking.id)
       if (res.error) {
         toast.error(res.error)
       } else if (res.qr) {
-        setStaffQR(res.qr)
+        setStaffQR(res.qr as QRCodeType)
         setShowQR(true)
       }
     } catch {
@@ -173,6 +183,7 @@ function PharmacyCard({
           </div>
         </div>
       </CardHeader>
+
       <CardContent className="space-y-4">
         {booking && (
           <div className="grid grid-cols-3 gap-4 rounded-lg bg-muted p-3 text-sm">
@@ -191,7 +202,6 @@ function PharmacyCard({
           </div>
         )}
 
-        {/* Step 1: Assign Locker */}
         {booking && bookingStatus === "pending" && (
           <div className="flex items-end gap-3 rounded-lg border border-border p-4">
             <div className="flex-1 space-y-2">
@@ -199,6 +209,7 @@ function PharmacyCard({
                 <Lock className="h-4 w-4 text-primary" />
                 <p className="text-sm font-medium text-foreground">Step 1: Assign Locker</p>
               </div>
+
               <Select value={selectedLockerId} onValueChange={setSelectedLockerId}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select available locker" />
@@ -212,41 +223,53 @@ function PharmacyCard({
                 </SelectContent>
               </Select>
             </div>
-            <Button onClick={handleAssignLocker} disabled={assigning || !selectedLockerId} size="sm">
+
+            <Button
+              onClick={handleAssignLocker}
+              disabled={assigning || !selectedLockerId}
+              size="sm"
+            >
               {assigning ? "Assigning..." : "Assign"}
             </Button>
           </div>
         )}
 
-        {/* Step 2: Place Medication & Mark Ready */}
         {booking && bookingStatus === "locker_assigned" && locker && (
           <div className="flex items-center justify-between rounded-lg border border-border p-4">
             <div className="flex items-center gap-3">
               <CheckCircle2 className="h-5 w-5 text-primary" />
               <div>
-                <p className="text-sm font-medium text-foreground">Step 2: Place medication in {locker.label}</p>
-                <p className="text-xs text-muted-foreground">Once placed, mark as ready to generate QR and notify patient</p>
+                <p className="text-sm font-medium text-foreground">
+                  Step 2: Place medication in {locker.label}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Once placed, mark as ready to generate QR and notify patient
+                </p>
               </div>
             </div>
+
             <Button onClick={handleMarkReady} disabled={marking} size="sm">
               {marking ? "Processing..." : "Mark as Ready"}
             </Button>
           </div>
         )}
 
-        {/* Step 3: Ready - Show QR Info */}
         {booking && bookingStatus === "ready" && qr && (
           <div className="space-y-3 rounded-lg border border-[hsl(152,60%,40%)] bg-[hsl(152,40%,95%)] p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <QrCode className="h-5 w-5 text-[hsl(152,60%,30%)]" />
-                <p className="text-sm font-medium text-[hsl(152,60%,25%)]">Ready for Patient Pickup</p>
+                <p className="text-sm font-medium text-[hsl(152,60%,25%)]">
+                  Ready for Patient Pickup
+                </p>
               </div>
+
               <Button variant="outline" size="sm" onClick={handleGenerateStaffQR}>
                 <QrCode className="mr-1.5 h-4 w-4" />
                 Staff QR
               </Button>
             </div>
+
             <div className="text-xs text-[hsl(152,60%,30%)]">
               <p>QR token sent to patient. Locker: {locker?.label}</p>
               <p>Expires: {new Date(qr.expiresAt).toLocaleString()}</p>
@@ -254,7 +277,6 @@ function PharmacyCard({
           </div>
         )}
 
-        {/* Collected */}
         {booking && bookingStatus === "collected" && (
           <div className="rounded-lg bg-muted p-4 text-center">
             <CheckCircle2 className="mx-auto mb-2 h-6 w-6 text-[hsl(152,60%,40%)]" />
@@ -262,22 +284,23 @@ function PharmacyCard({
           </div>
         )}
 
-        {/* Staff QR Dialog */}
         <Dialog open={showQR} onOpenChange={setShowQR}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Staff QR Code</DialogTitle>
             </DialogHeader>
+
             {staffQR && (
               <div className="space-y-4 text-center">
                 <div className="mx-auto flex h-48 w-48 items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted">
                   <div className="space-y-2">
                     <QrCode className="mx-auto h-16 w-16 text-foreground" />
-                    <p className="font-mono text-xs text-muted-foreground break-all px-2">
+                    <p className="break-all px-2 font-mono text-xs text-muted-foreground">
                       {staffQR.token.slice(0, 20)}...
                     </p>
                   </div>
                 </div>
+
                 <div className="text-sm text-muted-foreground">
                   <p>Booking: {staffQR.bookingId}</p>
                   <p>Expires: {new Date(staffQR.expiresAt).toLocaleString()}</p>
@@ -299,6 +322,7 @@ function BookingStatusBadge({ status }: { status: string }) {
     collected: "bg-muted text-muted-foreground",
     expired: "bg-[hsl(0,70%,95%)] text-destructive",
   }
+
   const labels: Record<string, string> = {
     pending: "Pending Locker",
     locker_assigned: "Locker Assigned",
@@ -306,6 +330,7 @@ function BookingStatusBadge({ status }: { status: string }) {
     collected: "Collected",
     expired: "Expired",
   }
+
   return (
     <Badge className={`text-xs ${variants[status] || ""}`}>
       {labels[status] || status}
