@@ -2,6 +2,8 @@
 
 import React, { useState, useCallback } from "react"
 import { toast } from "sonner"
+import { collection, query, where, getDocs } from "firebase/firestore"
+import { db } from "@/src/config/firebase"
 import {
   Stethoscope,
   Plus,
@@ -25,11 +27,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { RiskDisplay } from "@/components/risk/risk-display"
 import {
-  getPatientList,
-  runRiskAssessment,
-  submitPrescription,
   getDoctorPrescriptions,
   getDoctorRefillRequests,
+  runRiskAssessment,
+  submitPrescription,
   approveRefillRequest,
   rejectRefillRequest,
 } from "@/lib/actions"
@@ -62,19 +63,35 @@ type PatientSummary = {
   id: string
   name: string
   email: string
-  allergies?: string[]
+  allergies: string[]
 }
 
 function usePatientsData() {
-  return useSWR("doctor-patients", async () => {
-    const res = await getPatientList()
-    if (res.error) throw new Error(res.error)
-    return (res.patients || []) as PatientSummary[]
+  return useSWR<PatientSummary[]>("doctor-patients", async () => {
+    const q = query(collection(db, "users"), where("role", "==", "patient"))
+    const querySnapshot = await getDocs(q)
+
+    return querySnapshot.docs.map((doc) => {
+      const data = doc.data() as {
+        name?: string
+        email?: string
+        allergies?: unknown
+      }
+
+      return {
+        id: doc.id,
+        name: data.name ?? "",
+        email: data.email ?? "",
+        allergies: Array.isArray(data.allergies)
+          ? data.allergies.filter((a): a is string => typeof a === "string")
+          : [],
+      }
+    })
   })
 }
 
 function usePrescriptionsData() {
-  return useSWR("doctor-prescriptions", async () => {
+  return useSWR<Prescription[]>("doctor-prescriptions", async () => {
     const res = await getDoctorPrescriptions()
     if (res.error) throw new Error(res.error)
     return (res.prescriptions || []) as Prescription[]
@@ -82,7 +99,7 @@ function usePrescriptionsData() {
 }
 
 function useRefillRequestsData() {
-  return useSWR("doctor-refill-requests", async () => {
+  return useSWR<RefillRequest[]>("doctor-refill-requests", async () => {
     const res = await getDoctorRefillRequests()
     if (res.error) throw new Error(res.error)
     return (res.requests || []) as RefillRequest[]
@@ -299,10 +316,11 @@ export function DoctorDashboard() {
                         ))}
                       </SelectContent>
                     </Select>
-                    {selectedPatient && selectedPatient.allergies && selectedPatient.allergies.length > 0 && (
+
+                    {selectedPatient && selectedPatient.allergies.length > 0 && (
                       <div className="flex flex-wrap items-center gap-1.5 pt-1">
                         <span className="text-xs text-muted-foreground">Allergies:</span>
-                        {selectedPatient.allergies.map((a) => (
+                        {selectedPatient.allergies.map((a: string) => (
                           <Badge key={a} variant="destructive" className="text-xs">
                             {a}
                           </Badge>
@@ -319,6 +337,7 @@ export function DoctorDashboard() {
                         Add Medication
                       </Button>
                     </div>
+
                     {medications.map((med, index) => (
                       <div key={index} className="flex items-start gap-2 rounded-lg border border-border p-3">
                         <div className="flex flex-1 flex-col gap-2 sm:flex-row">
@@ -346,6 +365,7 @@ export function DoctorDashboard() {
                             />
                           </div>
                         </div>
+
                         {medications.length > 1 && (
                           <Button
                             type="button"
@@ -387,6 +407,7 @@ export function DoctorDashboard() {
                             filledMedications.length !== 1 ? "s" : ""
                           })`}
                     </Button>
+
                     <Button type="submit" className="flex-1" disabled={loading}>
                       {loading ? "Confirming..." : "Confirm Prescription"}
                     </Button>
@@ -444,6 +465,7 @@ export function DoctorDashboard() {
                       </Badge>
                     </div>
                   </CardHeader>
+
                   <CardContent className="space-y-4">
                     <div className="rounded-lg bg-muted p-3">
                       <p className="mb-2 text-sm font-medium text-foreground">Medications Requested:</p>
@@ -476,6 +498,7 @@ export function DoctorDashboard() {
                         )}
                         Approve Refill
                       </Button>
+
                       <Button
                         variant="outline"
                         className="flex-1"
@@ -506,6 +529,7 @@ export function DoctorDashboard() {
               Please provide a reason for declining this refill request. The patient will be notified.
             </DialogDescription>
           </DialogHeader>
+
           {selectedRefillRequest && (
             <div className="space-y-4">
               <div className="rounded-lg bg-muted p-3">
@@ -514,6 +538,7 @@ export function DoctorDashboard() {
                   {selectedRefillRequest.medications.map((m) => m.name).join(", ")}
                 </p>
               </div>
+
               <div className="space-y-2">
                 <Label htmlFor="rejection-reason">Reason for Declining</Label>
                 <Textarea
@@ -526,6 +551,7 @@ export function DoctorDashboard() {
               </div>
             </div>
           )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowRejectDialog(false)}>
               Cancel
@@ -585,7 +611,9 @@ function PrescriptionHistory({ prescriptions }: { prescriptions: Prescription[] 
                 ))}
               </div>
               {rx.notes && <p className="text-xs text-muted-foreground">{rx.notes}</p>}
-              <p className="text-xs text-muted-foreground">{new Date(rx.createdAt).toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground">
+                {new Date(rx.createdAt).toLocaleString()}
+              </p>
             </div>
             {rx.riskAssessment && <RiskDisplay assessment={rx.riskAssessment} compact />}
           </CardContent>

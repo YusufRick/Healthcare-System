@@ -1,10 +1,16 @@
 "use client"
 
-import React from "react"
-
-import { useState } from "react"
+import React, { useState } from "react"
 import { toast } from "sonner"
-import { Building2, CalendarClock, Send, ClipboardList, CheckCircle2, Clock, Package } from "lucide-react"
+import {
+  Building2,
+  CalendarClock,
+  Send,
+  ClipboardList,
+  CheckCircle2,
+  Clock,
+  Package,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -12,9 +18,20 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { RiskDisplay } from "@/components/risk/risk-display"
-import { getClinicPrescriptions, submitBooking, getClinicPrescriptionHistory } from "@/lib/actions"
+import {
+  getClinicPrescriptions,
+  submitBooking,
+  getClinicPrescriptionHistory,
+} from "@/lib/actions"
 import type { Prescription, Booking } from "@/lib/types"
 import useSWR, { useSWRConfig } from "swr"
 
@@ -34,24 +51,24 @@ const TIME_SLOTS = [
   "16:00 - 17:00",
 ]
 
-function useClinicPrescriptions() {
-  return useSWR("clinic-prescriptions", async () => {
-    const res = await getClinicPrescriptions()
-    if (res.error) throw new Error(res.error)
-    return res.prescriptions || []
-  })
-}
-
 interface HistoryItem {
   prescription: Prescription
   booking: Booking | null
 }
 
+function useClinicPrescriptions() {
+  return useSWR<Prescription[]>("clinic-prescriptions", async () => {
+    const res = await getClinicPrescriptions()
+    if (res.error) throw new Error(res.error)
+    return (res.prescriptions || []) as Prescription[]
+  })
+}
+
 function usePrescriptionHistory() {
-  return useSWR("clinic-prescription-history", async () => {
+  return useSWR<HistoryItem[]>("clinic-prescription-history", async () => {
     const res = await getClinicPrescriptionHistory()
     if (res.error) throw new Error(res.error)
-    return res.history || []
+    return (res.history || []) as HistoryItem[]
   })
 }
 
@@ -105,7 +122,11 @@ export function ClinicDashboard() {
                 {prescriptions.length} confirmed prescription(s) awaiting booking
               </p>
               {prescriptions.map((rx) => (
-                <PrescriptionBookingCard key={rx.id} prescription={rx} onBooked={() => mutate()} />
+                <PrescriptionBookingCard
+                  key={rx.id}
+                  prescription={rx}
+                  onBooked={() => mutate()}
+                />
               ))}
             </div>
           )}
@@ -127,7 +148,7 @@ export function ClinicDashboard() {
               <p className="text-sm text-muted-foreground">
                 Showing all {history.length} prescription(s)
               </p>
-              {history.map((item: HistoryItem) => (
+              {history.map((item) => (
                 <PrescriptionHistoryCard key={item.prescription.id} item={item} />
               ))}
             </div>
@@ -155,20 +176,33 @@ function PrescriptionBookingCard({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+
     if (!patientEmail || !pickupDate || !pickupTime || !pharmacyName) {
       toast.error("Please fill in all fields")
       return
     }
+
     setLoading(true)
     try {
       const formattedPickup = `${pickupDate} ${pickupTime}`
-      const res = await submitBooking(prescription.id, patientEmail, formattedPickup, pharmacyName)
+      const res = await submitBooking(
+        prescription.id,
+        patientEmail,
+        formattedPickup,
+        pharmacyName
+      )
+
       if (res.error) {
         toast.error(res.error)
       } else {
         toast.success("Booking created successfully")
         setOpen(false)
+        setPatientEmail("")
+        setPickupDate("")
+        setPickupTime("")
+        setPharmacyName("")
         onBooked()
+        globalMutate("clinic-prescription-history")
         globalMutate("audit-logs")
         globalMutate("email-logs")
       }
@@ -190,6 +224,7 @@ function PrescriptionBookingCard({
                 Confirmed
               </Badge>
             </div>
+
             <div className="space-y-0.5">
               {prescription.medications.map((med, i) => (
                 <p key={i} className="text-sm text-foreground">
@@ -197,17 +232,21 @@ function PrescriptionBookingCard({
                 </p>
               ))}
             </div>
+
             {prescription.notes && (
               <p className="text-sm text-muted-foreground">Notes: {prescription.notes}</p>
             )}
+
             <p className="text-xs text-muted-foreground">
               Prescribed: {new Date(prescription.createdAt).toLocaleString()}
             </p>
           </div>
+
           <div className="flex flex-col items-end gap-2">
             {prescription.riskAssessment && (
               <RiskDisplay assessment={prescription.riskAssessment} compact />
             )}
+
             <Dialog open={open} onOpenChange={setOpen}>
               <DialogTrigger asChild>
                 <Button size="sm">
@@ -215,6 +254,7 @@ function PrescriptionBookingCard({
                   Create Booking
                 </Button>
               </DialogTrigger>
+
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Create Pickup Booking</DialogTitle>
@@ -222,6 +262,7 @@ function PrescriptionBookingCard({
                     Schedule pickup for {prescription.patientName} &mdash; {medSummary}
                   </DialogDescription>
                 </DialogHeader>
+
                 <form onSubmit={handleSubmit} className="space-y-4 pt-2">
                   <div className="space-y-2">
                     <Label htmlFor="patient-email">Patient Email</Label>
@@ -243,9 +284,11 @@ function PrescriptionBookingCard({
                         type="date"
                         value={pickupDate}
                         onChange={(e) => setPickupDate(e.target.value)}
+                        min={new Date().toISOString().split("T")[0]}
                         required
                       />
                     </div>
+
                     <div className="space-y-2">
                       <Label>Time Slot</Label>
                       <Select value={pickupTime} onValueChange={setPickupTime}>
@@ -275,25 +318,27 @@ function PrescriptionBookingCard({
                             {p}
                           </SelectItem>
                         ))}
-              </SelectContent>
-            </Select>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {prescription.riskAssessment && (
+                    <div className="pt-2">
+                      <Label className="mb-2 block text-xs text-muted-foreground">
+                        Risk Assessment (read-only)
+                      </Label>
+                      <RiskDisplay assessment={prescription.riskAssessment} compact />
+                    </div>
+                  )}
+
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading ? "Creating booking..." : "Submit Booking"}
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
           </div>
-
-          {prescription.riskAssessment && (
-            <div className="pt-2">
-              <Label className="mb-2 block text-xs text-muted-foreground">Risk Assessment (read-only)</Label>
-              <RiskDisplay assessment={prescription.riskAssessment} compact />
-            </div>
-          )}
-
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Creating booking..." : "Submit Booking"}
-          </Button>
-        </form>
-      </DialogContent>
-    </Dialog>
-  </div>
-</div>
+        </div>
       </CardContent>
     </Card>
   )
@@ -338,6 +383,7 @@ function PrescriptionHistoryCard({ item }: { item: HistoryItem }) {
                 {statusLabels[rx.status] || rx.status}
               </Badge>
             </div>
+
             <div className="space-y-0.5">
               {rx.medications.map((med, i) => (
                 <p key={i} className="text-sm text-foreground">
@@ -345,9 +391,11 @@ function PrescriptionHistoryCard({ item }: { item: HistoryItem }) {
                 </p>
               ))}
             </div>
+
             {rx.notes && (
               <p className="text-sm text-muted-foreground">Notes: {rx.notes}</p>
             )}
+
             <p className="text-xs text-muted-foreground">
               Prescribed: {new Date(rx.createdAt).toLocaleString()}
             </p>

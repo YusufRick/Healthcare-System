@@ -26,8 +26,21 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { getPatientDashboard, scanQRCode, closeLocker, requestPrescriptionRefill, getPatientRefillRequests, patientBookPrescription } from "@/lib/actions"
-import type { Prescription, Booking, QRCode as QRCodeType, Locker, RefillRequest } from "@/lib/types"
+import {
+  getPatientDashboard,
+  scanQRCode,
+  closeLocker,
+  requestPrescriptionRefill,
+  getPatientRefillRequests,
+  patientBookPrescription,
+} from "@/lib/actions"
+import type {
+  Prescription,
+  Booking,
+  QRCode as QRCodeType,
+  Locker,
+  RefillRequest,
+} from "@/lib/types"
 import useSWR from "swr"
 
 const PHARMACIES = [
@@ -46,22 +59,6 @@ const TIME_SLOTS = [
   "16:00 - 17:00",
 ]
 
-function usePatientData() {
-  return useSWR("patient-dashboard", async () => {
-    const res = await getPatientDashboard()
-    if (res.error) throw new Error(res.error)
-    return { items: res.items || [], patientName: res.patientName || "" }
-  })
-}
-
-function useRefillRequests() {
-  return useSWR("patient-refill-requests", async () => {
-    const res = await getPatientRefillRequests()
-    if (res.error) throw new Error(res.error)
-    return res.requests || []
-  })
-}
-
 interface PatientItem {
   prescription: Prescription
   booking: Booking | null
@@ -69,19 +66,50 @@ interface PatientItem {
   locker: Locker | null
 }
 
+type PatientDashboardData = {
+  items: PatientItem[]
+  patientName: string
+}
+
+function usePatientData() {
+  return useSWR<PatientDashboardData>("patient-dashboard", async () => {
+    const res = await getPatientDashboard()
+    if (res.error) throw new Error(res.error)
+    return {
+      items: (res.items || []) as PatientItem[],
+      patientName: res.patientName || "",
+    }
+  })
+}
+
+function useRefillRequests() {
+  return useSWR<RefillRequest[]>("patient-refill-requests", async () => {
+    const res = await getPatientRefillRequests()
+    if (res.error) throw new Error(res.error)
+    return (res.requests || []) as RefillRequest[]
+  })
+}
+
 export function PatientDashboard() {
   const { data, mutate } = usePatientData()
-  const { data: refillRequests, mutate: mutateRefills } = useRefillRequests()
+  const { data: refillRequests = [], mutate: mutateRefills } = useRefillRequests()
+
   const items = data?.items || []
+
   const [scanToken, setScanToken] = useState("")
   const [scanning, setScanning] = useState(false)
-  const [scanResult, setScanResult] = useState<{ success?: boolean; lockerLabel?: string; error?: string } | null>(null)
+  const [scanResult, setScanResult] = useState<{
+    success?: boolean
+    lockerLabel?: string
+    error?: string
+  } | null>(null)
+
   const [showScanDialog, setShowScanDialog] = useState(false)
   const [showRefillDialog, setShowRefillDialog] = useState(false)
   const [selectedPrescription, setSelectedPrescription] = useState<Prescription | null>(null)
   const [refillReason, setRefillReason] = useState("")
   const [submittingRefill, setSubmittingRefill] = useState(false)
-  
+
   const [showBookingDialog, setShowBookingDialog] = useState(false)
   const [bookingPrescription, setBookingPrescription] = useState<Prescription | null>(null)
   const [pickupDate, setPickupDate] = useState("")
@@ -94,6 +122,7 @@ export function PatientDashboard() {
       toast.error("Please enter a QR code token")
       return
     }
+
     setScanning(true)
     try {
       const res = await scanQRCode(scanToken.trim())
@@ -145,10 +174,16 @@ export function PatientDashboard() {
       toast.error("Please fill in all fields")
       return
     }
+
     setSubmittingBooking(true)
     try {
       const formattedPickup = `${pickupDate} ${pickupTime}`
-      const res = await patientBookPrescription(bookingPrescription.id, formattedPickup, pharmacyName)
+      const res = await patientBookPrescription(
+        bookingPrescription.id,
+        formattedPickup,
+        pharmacyName
+      )
+
       if (res.error) {
         toast.error(res.error)
       } else {
@@ -169,9 +204,14 @@ export function PatientDashboard() {
       toast.error("Please provide a reason for the refill request")
       return
     }
+
     setSubmittingRefill(true)
     try {
-      const res = await requestPrescriptionRefill(selectedPrescription.id, refillReason.trim())
+      const res = await requestPrescriptionRefill(
+        selectedPrescription.id,
+        refillReason.trim()
+      )
+
       if (res.error) {
         toast.error(res.error)
       } else {
@@ -189,11 +229,15 @@ export function PatientDashboard() {
   }
 
   function hasPendingRefill(prescriptionId: string): boolean {
-    return refillRequests?.some((r: RefillRequest) => r.prescriptionId === prescriptionId && r.status === "pending") || false
+    return (
+      refillRequests.some(
+        (r) => r.prescriptionId === prescriptionId && r.status === "pending"
+      ) || false
+    )
   }
 
   function getRefillRequestStatus(prescriptionId: string): RefillRequest | undefined {
-    return refillRequests?.find((r: RefillRequest) => r.prescriptionId === prescriptionId)
+    return refillRequests.find((r) => r.prescriptionId === prescriptionId)
   }
 
   return (
@@ -238,9 +282,15 @@ export function PatientDashboard() {
             </Button>
 
             {scanResult && (
-              <div className={`rounded-lg p-4 ${scanResult.success ? "bg-[hsl(152,40%,95%)] border border-[hsl(152,60%,40%)]" : "bg-[hsl(0,70%,97%)] border border-destructive"}`}>
+              <div
+                className={`rounded-lg p-4 ${
+                  scanResult.success
+                    ? "border border-[hsl(152,60%,40%)] bg-[hsl(152,40%,95%)]"
+                    : "border border-destructive bg-[hsl(0,70%,97%)]"
+                }`}
+              >
                 {scanResult.success ? (
-                  <div className="text-center space-y-3">
+                  <div className="space-y-3 text-center">
                     <Unlock className="mx-auto h-10 w-10 text-[hsl(152,60%,40%)]" />
                     <div>
                       <p className="font-medium text-[hsl(152,60%,25%)]">Locker Unlocked!</p>
@@ -250,7 +300,7 @@ export function PatientDashboard() {
                     </div>
                   </div>
                 ) : (
-                  <div className="text-center space-y-2">
+                  <div className="space-y-2 text-center">
                     <XCircle className="mx-auto h-10 w-10 text-destructive" />
                     <p className="font-medium text-destructive">{scanResult.error}</p>
                   </div>
@@ -334,7 +384,7 @@ export function PatientDashboard() {
                   ))}
                 </ul>
               </div>
-              
+
               <div className="space-y-2">
                 <Label htmlFor="pharmacy">Pharmacy</Label>
                 <Select value={pharmacyName} onValueChange={setPharmacyName}>
@@ -389,8 +439,8 @@ export function PatientDashboard() {
             <Button variant="outline" onClick={() => setShowBookingDialog(false)}>
               Cancel
             </Button>
-            <Button 
-              onClick={handleSubmitBooking} 
+            <Button
+              onClick={handleSubmitBooking}
               disabled={submittingBooking || !pickupDate || !pickupTime || !pharmacyName}
             >
               {submittingBooking ? (
@@ -414,9 +464,9 @@ export function PatientDashboard() {
           <TabsTrigger value="prescriptions">My Prescriptions</TabsTrigger>
           <TabsTrigger value="refill-requests">
             Refill Requests
-            {refillRequests && refillRequests.filter((r: RefillRequest) => r.status === "pending").length > 0 && (
+            {refillRequests.filter((r) => r.status === "pending").length > 0 && (
               <Badge variant="secondary" className="ml-2">
-                {refillRequests.filter((r: RefillRequest) => r.status === "pending").length}
+                {refillRequests.filter((r) => r.status === "pending").length}
               </Badge>
             )}
           </TabsTrigger>
@@ -435,7 +485,7 @@ export function PatientDashboard() {
             </Card>
           ) : (
             <div className="space-y-4">
-              {items.map((item: PatientItem) => (
+              {items.map((item) => (
                 <PatientPrescriptionCard
                   key={item.prescription.id}
                   item={item}
@@ -451,7 +501,7 @@ export function PatientDashboard() {
         </TabsContent>
 
         <TabsContent value="refill-requests" className="space-y-4">
-          {!refillRequests || refillRequests.length === 0 ? (
+          {refillRequests.length === 0 ? (
             <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                 <RefreshCw className="mb-3 h-10 w-10 text-muted-foreground" />
@@ -463,7 +513,7 @@ export function PatientDashboard() {
             </Card>
           ) : (
             <div className="space-y-4">
-              {refillRequests.map((request: RefillRequest) => (
+              {refillRequests.map((request) => (
                 <RefillRequestCard key={request.id} request={request} />
               ))}
             </div>
@@ -489,7 +539,7 @@ function PatientPrescriptionCard({
   hasPendingRefill: boolean
   refillRequest?: RefillRequest
 }) {
-  const { prescription: rx, booking, qr, locker } = item
+  const { prescription: rx, booking, locker } = item
   const canRequestRefill = rx.status === "collected" && !hasPendingRefill
 
   const statusSteps = [
@@ -514,6 +564,7 @@ function PatientPrescriptionCard({
           <PrescriptionStatusBadge status={rx.status} />
         </div>
       </CardHeader>
+
       <CardContent className="space-y-4">
         <div className="flex items-center justify-between">
           {statusSteps.map((step, i) => {
@@ -548,7 +599,7 @@ function PatientPrescriptionCard({
         )}
 
         {locker && locker.status === "unlocked" && booking && (
-          <div className="rounded-lg bg-[hsl(152,40%,95%)] p-4 border border-[hsl(152,60%,40%)]">
+          <div className="rounded-lg border border-[hsl(152,60%,40%)] bg-[hsl(152,40%,95%)] p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <Unlock className="h-6 w-6 text-[hsl(152,60%,40%)]" />
@@ -580,22 +631,26 @@ function PatientPrescriptionCard({
         )}
 
         {refillRequest && refillRequest.status === "pending" && (
-          <div className="rounded-lg bg-[hsl(37,80%,95%)] p-3 border border-[hsl(37,80%,60%)]">
+          <div className="rounded-lg border border-[hsl(37,80%,60%)] bg-[hsl(37,80%,95%)] p-3">
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-[hsl(37,90%,30%)]" />
-              <p className="text-sm font-medium text-[hsl(37,90%,25%)]">Refill request pending doctor approval</p>
+              <p className="text-sm font-medium text-[hsl(37,90%,25%)]">
+                Refill request pending doctor approval
+              </p>
             </div>
           </div>
         )}
 
         {refillRequest && refillRequest.status === "rejected" && (
-          <div className="rounded-lg bg-[hsl(0,70%,97%)] p-3 border border-destructive">
+          <div className="rounded-lg border border-destructive bg-[hsl(0,70%,97%)] p-3">
             <div className="flex items-center gap-2">
               <XCircle className="h-4 w-4 text-destructive" />
               <div>
                 <p className="text-sm font-medium text-destructive">Refill request declined</p>
                 {refillRequest.rejectionReason && (
-                  <p className="text-xs text-muted-foreground mt-1">Reason: {refillRequest.rejectionReason}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Reason: {refillRequest.rejectionReason}
+                  </p>
                 )}
               </div>
             </div>
@@ -612,18 +667,18 @@ function PrescriptionStatusBadge({ status }: { status: string }) {
     booked: "bg-[hsl(173,40%,92%)] text-[hsl(173,58%,22%)]",
     ready: "bg-[hsl(37,80%,92%)] text-[hsl(37,90%,30%)]",
     collected: "bg-[hsl(152,50%,92%)] text-[hsl(152,60%,25%)]",
+    expired: "bg-[hsl(0,70%,95%)] text-destructive",
   }
+
   const labels: Record<string, string> = {
     confirmed: "Awaiting Booking",
     booked: "Booked",
     ready: "Ready for Pickup",
     collected: "Collected",
+    expired: "Expired",
   }
-  return (
-    <Badge className={variants[status] || ""}>
-      {labels[status] || status}
-    </Badge>
-  )
+
+  return <Badge className={variants[status] || ""}>{labels[status] || status}</Badge>
 }
 
 function RefillRequestCard({ request }: { request: RefillRequest }) {
@@ -632,6 +687,7 @@ function RefillRequestCard({ request }: { request: RefillRequest }) {
     approved: "bg-[hsl(152,50%,92%)] text-[hsl(152,60%,25%)]",
     rejected: "bg-[hsl(0,70%,95%)] text-destructive",
   }
+
   const statusLabels: Record<string, string> = {
     pending: "Pending Review",
     approved: "Approved",
@@ -647,7 +703,7 @@ function RefillRequestCard({ request }: { request: RefillRequest }) {
               {request.medications.map((m) => m.name).join(", ")}
             </p>
             <p className="text-sm text-muted-foreground">
-              Requested: {new Date(request.requestedAt).toLocaleDateString()}
+              Requested: {new Date(request.createdAt).toLocaleDateString()}
             </p>
             <p className="text-sm text-muted-foreground">Reason: {request.reason}</p>
           </div>
@@ -655,8 +711,9 @@ function RefillRequestCard({ request }: { request: RefillRequest }) {
             {statusLabels[request.status]}
           </Badge>
         </div>
+
         {request.status === "rejected" && request.rejectionReason && (
-          <div className="mt-3 rounded-lg bg-[hsl(0,70%,97%)] p-2 border border-destructive">
+          <div className="mt-3 rounded-lg border border-destructive bg-[hsl(0,70%,97%)] p-2">
             <p className="text-sm text-destructive">
               <span className="font-medium">Reason:</span> {request.rejectionReason}
             </p>
