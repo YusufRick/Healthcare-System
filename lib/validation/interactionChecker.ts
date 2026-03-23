@@ -1,108 +1,99 @@
-import fs from "fs";
-import path from "path";
-import { parse } from "csv-parse/sync";
-import { RiskAlert } from "../types";
-import { DrugRecord, getDrugInteractions } from "./drugRepository";
+import fs from "fs"
+import path from "path"
+import { parse } from "csv-parse/sync"
+import type { MedicationInput, ValidationIssue } from "@/lib/types"
+import { DrugRecord, getDrugInteractions } from "./drugRepository"
 
-export interface DrugInteraction {
-  drug_a: string;
-  drug_b: string;
-  severity: "CRITICAL" | "HIGH" | "MODERATE" | "LOW";
-  description: string;
-  recommendation: string;
+interface InteractionRecord {
+  drug_a: string
+  drug_b: string
+  severity: "low" | "medium" | "high"
+  description: string
 }
 
-let cachedInteractions: DrugInteraction[] | null = null;
+let cachedInteractions: InteractionRecord[] | null = null
 
 function normalize(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
 }
 
-function loadInteractionsCSV(): DrugInteraction[] {
-  try {
-    const filePath = path.join(process.cwd(), "data", "drug_interaction.csv");
-    const fileContent = fs.readFileSync(filePath, "utf-8");
+function readInteractionCsv(): InteractionRecord[] {
+  const filePath = path.join(process.cwd(), "data", "drug_interaction.csv")
+  if (!fs.existsSync(filePath)) return []
 
-    const records = parse(fileContent, {
-      columns: true,
-      skip_empty_lines: true,
-    });
+  const fileContent = fs.readFileSync(filePath, "utf-8")
+  const records = parse(fileContent, {
+    columns: true,
+    skip_empty_lines: true,
+  })
 
-    return records as DrugInteraction[];
-  } catch {
-    console.error("[InteractionChecker] Failed to load drug_interaction.csv");
-    return [];
-  }
+  return records as InteractionRecord[]
 }
 
-function getAllInteractions(): DrugInteraction[] {
+function getAllInteractions(): InteractionRecord[] {
   if (!cachedInteractions) {
-    cachedInteractions = loadInteractionsCSV();
+    cachedInteractions = readInteractionCsv()
   }
-  return cachedInteractions;
+  return cachedInteractions
 }
 
-function namesMatch(candidate: string, query: string) {
-  const left = normalize(candidate);
-  const right = normalize(query);
-  return left === right || left.includes(right) || right.includes(left);
+function namesMatch(a: string, b: string) {
+  return normalize(a) === normalize(b)
 }
 
-function findInteraction(drugA: string, drugB: string): DrugInteraction | undefined {
-  const interactions = getAllInteractions();
+function getComparableNames(drug: DrugRecord): string[] {
+  return [drug.name, drug.generic_name, ...(drug.brand_names || [])]
+    .filter(Boolean)
+    .map((value) => value!)
+}
 
-  return interactions.find((interaction) => {
+function findInteraction(drugA: DrugRecord, drugB: DrugRecord): InteractionRecord | undefined {
+  const aNames = getComparableNames(drugA)
+  const bNames = getComparableNames(drugB)
+
+  return getAllInteractions().find((entry) => {
     return (
-      (namesMatch(interaction.drug_a, drugA) && namesMatch(interaction.drug_b, drugB)) ||
-      (namesMatch(interaction.drug_a, drugB) && namesMatch(interaction.drug_b, drugA))
-    );
-  });
+      aNames.some((a) => namesMatch(entry.drug_a, a)) &&
+      bNames.some((b) => namesMatch(entry.drug_b, b))
+    ) || (
+      aNames.some((a) => namesMatch(entry.drug_b, a)) &&
+      bNames.some((b) => namesMatch(entry.drug_a, b))
+    )
+  })
 }
 
-export function checkInteractions(prescribedDrugs: DrugRecord[]): RiskAlert[] {
-  const alerts: RiskAlert[] = [];
-
-  for (let i = 0; i < prescribedDrugs.length; i++) {
-    for (let j = i + 1; j < prescribedDrugs.length; j++) {
-      const drugA = prescribedDrugs[i];
-      const drugB = prescribedDrugs[j];
-
-      const interaction = findInteraction(drugA.name, drugB.name);
-
-      if (interaction) {
-        alerts.push({
-          type: "interaction",
-          severity: mapSeverity(interaction.severity),
-          message: `${interaction.description}. Recommendation: ${interaction.recommendation}`,
-        });
-        continue;
-      }
-
-      const drugAInteractions = getDrugInteractions(drugA);
-      const drugBInteractions = getDrugInteractions(drugB);
-      const fallbackMatch =
-        drugAInteractions.some((entry) => namesMatch(entry, drugB.name)) ||
-        drugBInteractions.some((entry) => namesMatch(entry, drugA.name));
-
-      if (fallbackMatch) {
-        alerts.push({
-          type: "interaction",
-          severity: "WARNING",
-          message: `Potential interaction between ${drugA.name} and ${drugB.name}. Review current label guidance before confirming.`,
-        });
-      }
+export function checkInteractions(
+  medicationA: MedicationInput,
+  drugA: DrugRecord,
+  medicationB: MedicationInput,
+  drugB: DrugRecord
+): ValidationIssue | null {
+  const csvInteraction = findInteraction(drugA, drugB)
+  if (csvInteraction) {
+    return {
+      code: "DRUG_INTERACTION",
+      severity: csvInteraction.severity,
+      message: `${medicationA.name} and ${medicationB.name}: ${csvInteraction.description}`,
+      medicationName: `${medicationA.name}, ${medicationB.name}`,
     }
   }
 
-  return dedupeAlerts(alerts);
-}
+  const drugAInteractions = getDrugInteractions(drugA)
+  const drugBInteractions = getDrugInteractions(drugB)
 
-function mapSeverity(severity: DrugInteraction["severity"]): "CRITICAL" | "WARNING" | "INFO" {
-  if (severity === "CRITICAL" || severity === "HIGH") return "CRITICAL";
-  if (severity === "MODERATE") return "WARNING";
-  return "INFO";
-}
+  const drugANames = getComparableNames(drugA)
+  const drugBNames = getComparableNames(drugB)
 
-function dedupeAlerts(alerts: RiskAlert[]) {
-  return alerts.filter((alert, index) => alerts.findIndex((other) => other.message === alert.message) === index);
+  const fallbackMatch =
+    drugAInteractions.some((entry) => drugBNames.some((name) => namesMatch(entry, name))) ||
+    drugBInteractions.some((entry) => drugANames.some((name) => namesMatch(entry, name)))
+
+  if (!fallbackMatch) return null
+
+  return {
+    code: "DRUG_INTERACTION",
+    severity: "medium",
+    message: `${medicationA.name} may interact with ${medicationB.name}. Review combination before dispensing.`,
+    medicationName: `${medicationA.name}, ${medicationB.name}`,
+  }
 }

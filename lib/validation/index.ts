@@ -1,65 +1,73 @@
-import { MedicationItem, RiskAssessment, RiskAlert } from "../types";
-import { findDrugByName } from "./drugRepository";
-import { validateDosage } from "./dosageValidator";
-import { checkInteractions } from "./interactionChecker";
-import { checkAllergies } from "./allergyChecker";
+import type { PrescriptionInput, RiskAssessmentResult, ValidationIssue } from "@/lib/types"
+import { checkAllergies } from "./allergyChecker"
+import { validateDosage } from "./dosageValidator"
+import { findDrugByName } from "./drugRepository"
+import { checkInteractions } from "./interactionChecker"
 
-export function runRiskAssessment(input: {
-  medications: MedicationItem[];
-  patientAge?: number;
-  patientAllergies?: string[];
-}): RiskAssessment {
-  let alerts: RiskAlert[] = [];
+function severityScore(severity: ValidationIssue["severity"]) {
+  switch (severity) {
+    case "low":
+      return 1
+    case "medium":
+      return 2
+    case "high":
+      return 3
+    default:
+      return 0
+  }
+}
 
-  const resolvedDrugs = input.medications.map((med) => ({
-    medication: med,
-    drug: findDrugByName(med.name),
-  }));
+export async function runRiskAssessment(input: PrescriptionInput): Promise<RiskAssessmentResult> {
+  const issues: ValidationIssue[] = []
 
-  resolvedDrugs.forEach(({ medication, drug }) => {
+  const resolvedDrugs = await Promise.all(
+    input.medications.map(async (medication) => ({
+      medication,
+      drug: await findDrugByName(medication.name),
+    }))
+  )
+
+  for (const { medication, drug } of resolvedDrugs) {
     if (!drug) {
-      alerts.push({
-        type: "interaction",
-        severity: "INFO",
-        message: `Medication '${medication.name}' is not in the local formulary dataset, so automated checks are incomplete.`,
-      });
-      return;
+      issues.push({
+        code: "DRUG_NOT_FOUND",
+        severity: "medium",
+        message: `Medication '${medication.name}' was not found in OpenFDA or the local fallback dataset, so automated checks are incomplete.`,
+        medicationName: medication.name,
+      })
+      continue
     }
 
-    alerts.push(...validateDosage(medication, drug, input.patientAge));
-  });
+    const dosageIssue = validateDosage(medication, drug)
+    if (dosageIssue) {
+      issues.push(dosageIssue)
+    }
 
-  const knownDrugs = resolvedDrugs.flatMap(({ drug }) => (drug ? [drug] : []));
+    const allergyIssues = checkAllergies(medication, drug, input.patientAllergies || [])
+    issues.push(...allergyIssues)
+  }
 
-  alerts.push(...checkInteractions(knownDrugs));
-  alerts.push(...checkAllergies(knownDrugs, input.patientAllergies));
+  for (let i = 0; i < resolvedDrugs.length; i += 1) {
+    for (let j = i + 1; j < resolvedDrugs.length; j += 1) {
+      const a = resolvedDrugs[i]
+      const b = resolvedDrugs[j]
 
-  alerts = dedupeAlerts(alerts);
-  const score = calculateScore(alerts);
+      if (!a.drug || !b.drug) continue
+
+      const interactionIssue = checkInteractions(a.medication, a.drug, b.medication, b.drug)
+      if (interactionIssue) {
+        issues.push(interactionIssue)
+      }
+    }
+  }
+
+  const highestSeverity = issues.reduce<ValidationIssue["severity"]>(
+    (current, issue) => (severityScore(issue.severity) > severityScore(current) ? issue.severity : current),
+    "low"
+  )
 
   return {
-    alerts,
-    score,
-    level: convertToRiskLevel(score),
-  };
-}
-
-function dedupeAlerts(alerts: RiskAlert[]) {
-  return alerts.filter((alert, index) => alerts.findIndex((other) => other.message === alert.message) === index);
-}
-
-function calculateScore(alerts: RiskAlert[]): number {
-  const raw = alerts.reduce((total, alert) => {
-    if (alert.severity === "CRITICAL") return total + 35;
-    if (alert.severity === "WARNING") return total + 20;
-    return total + 5;
-  }, 0);
-
-  return Math.min(raw, 100);
-}
-
-function convertToRiskLevel(score: number): "Low" | "Medium" | "High" {
-  if (score < 20) return "Low";
-  if (score < 50) return "Medium";
-  return "High";
+    issues,
+    status: issues.length === 0 ? "safe" : highestSeverity === "high" ? "unsafe" : "review",
+  }
 }

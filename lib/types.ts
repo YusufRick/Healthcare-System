@@ -33,7 +33,9 @@ export interface User {
   email: string
   role: UserRole
   allergies?: string[]
+  status?: "active" | "disabled"
   createdAt: string
+  updatedAt?: string
 }
 
 // Master medication data
@@ -85,7 +87,7 @@ export interface Prescription {
   clinicId?: string
   medications: PrescribedMedication[]
   notes: string
-  riskAssessment: RiskAssessment | null
+  riskAssessment: RiskAssessmentResult | null
   status: PrescriptionStatus
   createdAt: string
 }
@@ -148,4 +150,32 @@ export interface RefillRequest {
   rejectionReason?: string
   createdAt: string
   respondedAt?: string
+}
+
+/* =========================
+   Validation / OpenFDA types
+   ========================= */
+
+export type ValidationSeverity = "low" | "medium" | "high"
+
+export interface ValidationIssue {
+  code: string
+  severity: ValidationSeverity
+  message: string
+  medicationName?: string
+}
+
+export interface MedicationInput {
+  name: string
+  dosage: string
+}
+
+export interface PrescriptionInput {
+  medications: MedicationInput[]
+  patientAllergies?: string[]
+}
+
+export interface RiskAssessmentResult {
+  issues: ValidationIssue[]
+  status: "safe" | "review" | "unsafe"
 }

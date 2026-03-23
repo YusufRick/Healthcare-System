@@ -31,7 +31,7 @@ import type {
   Prescription,
   QRCode,
   RefillRequest,
-  RiskAssessment,
+  RiskAssessmentResult,
   User,
 } from "./types"
 
@@ -275,7 +275,7 @@ export async function getPatientList() {
 export async function runRiskAssessment(
   medications: string[],
   patientId: string
-): Promise<{ assessment?: RiskAssessment; error?: string }> {
+): Promise<{ assessment?: RiskAssessmentResult; error?: string }> {
   const rawSession = await getSession()
   const session = toSessionUser(rawSession)
 
@@ -286,7 +286,7 @@ export async function runRiskAssessment(
   const patient = await getUserById(patientId)
   if (!patient) return { error: "Patient not found" }
 
-  const assessment = runStructuredRiskAssessment({
+  const assessment = await runStructuredRiskAssessment({
     medications: medications.map((name) => ({ name, dosage: "" })),
     patientAllergies: patient.allergies || [],
   })
@@ -298,7 +298,7 @@ export async function submitPrescription(
   patientId: string,
   medications: PrescribedMedication[],
   notes: string,
-  riskAssessment: RiskAssessment | null
+  riskAssessment: RiskAssessmentResult | null
 ) {
   const rawSession = await getSession()
   const session = toSessionUser(rawSession)
@@ -337,7 +337,7 @@ export async function submitPrescription(
       session.id,
       session.name,
       "Risk Assessment",
-      `Risk: ${riskAssessment.level} (${riskAssessment.score}/100) for ${medSummary} - ${patient.name}`
+      `Risk: ${riskAssessment.status} for ${medSummary} - ${patient.name}`
     )
   }
 
@@ -553,18 +553,16 @@ export async function submitBooking(
   const rx = await getPrescriptionById(prescriptionId)
   if (!rx) return { error: "Prescription not found" }
 
-const bookingRef = await addDoc(collection(db, "bookings"), {
-  prescriptionId,
-  patientEmail,
-  pickupTime,
-  pharmacyName,
-
-  createdById: session.id,
-  createdByRole: "clinic_staff",
-
-  status: "pending",
-  createdAt: new Date().toISOString(),
-})
+  const bookingRef = await addDoc(collection(db, "bookings"), {
+    prescriptionId,
+    patientEmail,
+    pickupTime,
+    pharmacyName,
+    createdById: session.id,
+    createdByRole: "clinic_staff",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  })
 
   await updatePrescriptionStatus(prescriptionId, "booked")
 
@@ -989,16 +987,16 @@ export async function patientBookPrescription(
     return { error: "Prescription is not available for booking" }
   }
 
-const bookingRef = await addDoc(collection(db, "bookings"), {
-  prescriptionId,
-  patientEmail: session.email,
-  pickupTime,
-  pharmacyName,
-  createdById: session.id,
-  createdByRole: "patient",
-  status: "pending",
-  createdAt: new Date().toISOString(),
-})
+  const bookingRef = await addDoc(collection(db, "bookings"), {
+    prescriptionId,
+    patientEmail: session.email,
+    pickupTime,
+    pharmacyName,
+    createdById: session.id,
+    createdByRole: "patient",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  })
 
   await updatePrescriptionStatus(prescriptionId, "booked")
 

@@ -24,7 +24,14 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { RiskDisplay } from "@/components/risk/risk-display"
 import {
   getDoctorPrescriptions,
@@ -35,11 +42,11 @@ import {
   rejectRefillRequest,
 } from "@/lib/actions"
 import type {
-  RiskAssessment,
   Prescription,
   MedicationItem,
   RefillRequest,
   PrescribedMedication,
+  RiskAssessmentResult,
 } from "@/lib/types"
 import useSWR, { useSWRConfig } from "swr"
 
@@ -115,7 +122,7 @@ export function DoctorDashboard() {
   const [selectedPatientId, setSelectedPatientId] = useState("")
   const [medications, setMedications] = useState<MedicationItem[]>([{ name: "", dosage: "" }])
   const [notes, setNotes] = useState("")
-  const [riskResult, setRiskResult] = useState<RiskAssessment | null>(null)
+  const [riskResult, setRiskResult] = useState<RiskAssessmentResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [assessing, setAssessing] = useState(false)
 
@@ -161,8 +168,13 @@ export function DoctorDashboard() {
         toast.error(res.error)
       } else if (res.assessment) {
         setRiskResult(res.assessment)
-        if (res.assessment.level === "HIGH") {
+
+        if (res.assessment.status === "unsafe") {
           toast.warning("High risk detected. Review alerts before confirming.")
+        } else if (res.assessment.status === "review") {
+          toast.warning("Potential medication risks found. Please review the alerts.")
+        } else {
+          toast.success("Risk assessment completed.")
         }
       }
     } finally {
