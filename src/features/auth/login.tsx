@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { login } from "@/lib/auth"
+import { signInWithEmailAndPassword } from "firebase/auth"
+import { doc, getDoc, query, collection, where, getDocs } from "firebase/firestore"
+import { auth, db } from "@/src/config/firebase"
 
 const roleMap: Record<string, string> = {
   doctor: "/dashboard/doctor",
@@ -25,23 +27,84 @@ const DEMO_ACCOUNTS = [
   { email: "patient@demo.com", password: "password123", role: "Patient" },
 ]
 
+type AppUser = {
+  uid?: string
+  name: string
+  email: string
+  role: "doctor" | "clinic_staff" | "pharmacy_staff" | "patient"
+  status?: "active" | "disabled"
+  allergies?: string[]
+}
+
+const firebaseSignIn = async ({ email, password }: { email: string; password: string }) => {
+  const result = await signInWithEmailAndPassword(auth, email, password)
+  return result
+}
+
 export function LoginForm() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
 
+  async function getUserProfile(uid: string, email: string): Promise<AppUser | null> {
+    const userRef = doc(db, "users", uid)
+    const userSnap = await getDoc(userRef)
+
+    if (userSnap.exists()) {
+      return userSnap.data() as AppUser
+    }
+
+    const q = query(collection(db, "users"), where("email", "==", email))
+    const snap = await getDocs(q)
+
+    if (!snap.empty) {
+      return snap.docs[0].data() as AppUser
+    }
+
+    return null
+  }
+
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
+
     try {
-      const result = await login(email)
-      if (result.error) {
-        toast.error(result.error)
-      } else if (result.user) {
-        toast.success(`Welcome back, ${result.user.name}`)
-        router.push(roleMap[result.user.role] || "/")
-        router.refresh()
+      const result = await firebaseSignIn({ email, password })
+      const firebaseUser = result.user
+
+      const userProfile = await getUserProfile(firebaseUser.uid, firebaseUser.email || email)
+
+      if (!userProfile) {
+        toast.error("User profile not found")
+        return
+      }
+
+      if (userProfile.status === "disabled") {
+        toast.error("This account has been disabled")
+        return
+      }
+
+      toast.success(`Welcome back, ${userProfile.name}`)
+      console.log("ROLE:", userProfile.role)
+      console.log("REDIRECT TO:", roleMap[userProfile.role] || "/")
+      router.replace(roleMap[userProfile.role] || "/")
+      
+    } catch (error: any) {
+      switch (error.code) {
+        case "auth/invalid-credential":
+        case "auth/wrong-password":
+        case "auth/user-not-found":
+          toast.error("Invalid email or password")
+          break
+        case "auth/invalid-email":
+          toast.error("Invalid email address")
+          break
+        case "auth/too-many-requests":
+          toast.error("Too many failed attempts. Please try again later.")
+          break
+        default:
+          toast.error("Login failed. Please try again.")
       }
     } finally {
       setLoading(false)
@@ -50,14 +113,41 @@ export function LoginForm() {
 
   async function handleDemoLogin(demoEmail: string, demoPassword: string) {
     setLoading(true)
+
     try {
-      const result = await login(demoEmail)
-      if (result.error) {
-        toast.error(result.error)
-      } else if (result.user) {
-        toast.success(`Welcome, ${result.user.name}`)
-        router.push(roleMap[result.user.role] || "/")
-        router.refresh()
+      const result = await firebaseSignIn({
+        email: demoEmail,
+        password: demoPassword,
+      })
+
+      const firebaseUser = result.user
+
+      const userProfile = await getUserProfile(firebaseUser.uid, firebaseUser.email || demoEmail)
+
+      if (!userProfile) {
+        toast.error("User profile not found")
+        return
+      }
+
+      if (userProfile.status === "disabled") {
+        toast.error("This account has been disabled")
+        return
+      }
+
+      toast.success(`Welcome, ${userProfile.name}`)
+      console.log("ROLE:", userProfile.role)
+      console.log("REDIRECT TO:", roleMap[userProfile.role] || "/")
+      router.push(roleMap[userProfile.role] || "/")
+      router.refresh()
+    } catch (error: any) {
+      switch (error.code) {
+        case "auth/invalid-credential":
+        case "auth/wrong-password":
+        case "auth/user-not-found":
+          toast.error("Invalid demo account credentials")
+          break
+        default:
+          toast.error("Demo login failed")
       }
     } finally {
       setLoading(false)
@@ -135,6 +225,7 @@ export function LoginForm() {
                     size="sm"
                     className="text-xs bg-transparent"
                     disabled={loading}
+                    type="button"
                     onClick={() => handleDemoLogin(acc.email, acc.password)}
                   >
                     {acc.role}

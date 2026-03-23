@@ -42,7 +42,7 @@ export function SignupForm() {
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault()
-    
+
     if (password !== confirmPassword) {
       toast.error("Passwords do not match")
       return
@@ -55,7 +55,8 @@ export function SignupForm() {
 
     setLoading(true)
     try {
-      const result = await register(name, email, role, allergies)
+      const result = await register(name, email, password, role, allergies)
+
       if (result.error) {
         toast.error(result.error)
       } else if (result.user) {
