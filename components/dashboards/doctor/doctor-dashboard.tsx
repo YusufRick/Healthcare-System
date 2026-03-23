@@ -75,25 +75,30 @@ type PatientSummary = {
 
 function usePatientsData() {
   return useSWR<PatientSummary[]>("doctor-patients", async () => {
-    const q = query(collection(db, "users"), where("role", "==", "patient"))
-    const querySnapshot = await getDocs(q)
+    try {
+      const q = query(collection(db, "users"), where("role", "==", "patient"))
+      const querySnapshot = await getDocs(q)
 
-    return querySnapshot.docs.map((doc) => {
-      const data = doc.data() as {
-        name?: string
-        email?: string
-        allergies?: unknown
-      }
+      return querySnapshot.docs.map((doc) => {
+        const data = doc.data() as {
+          name?: string
+          email?: string
+          allergies?: unknown
+        }
 
-      return {
-        id: doc.id,
-        name: data.name ?? "",
-        email: data.email ?? "",
-        allergies: Array.isArray(data.allergies)
-          ? data.allergies.filter((a): a is string => typeof a === "string")
-          : [],
-      }
-    })
+        return {
+          id: doc.id,
+          name: data.name ?? "",
+          email: data.email ?? "",
+          allergies: Array.isArray(data.allergies)
+            ? data.allergies.filter((a): a is string => typeof a === "string")
+            : [],
+        }
+      })
+    } catch (error) {
+      console.error("Failed to load patients:", error)
+      throw error
+    }
   })
 }
 
