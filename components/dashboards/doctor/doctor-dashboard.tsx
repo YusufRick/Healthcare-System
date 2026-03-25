@@ -63,7 +63,6 @@ const AVAILABLE_MEDICATIONS = [
   "Omeprazole",
   "Ciprofloxacin",
   "Prednisone",
-  "Paracetamol",
 ]
 
 type PatientSummary = {
@@ -106,7 +105,7 @@ function usePrescriptionsData() {
   return useSWR<Prescription[]>("doctor-prescriptions", async () => {
     const res = await getDoctorPrescriptions()
     if (res.error) throw new Error(res.error)
-    return (res.prescriptions || []) as Prescription[]
+    return (res.prescriptions ?? []) as Prescription[]
   })
 }
 
@@ -114,7 +113,7 @@ function useRefillRequestsData() {
   return useSWR<RefillRequest[]>("doctor-refill-requests", async () => {
     const res = await getDoctorRefillRequests()
     if (res.error) throw new Error(res.error)
-    return (res.requests || []) as RefillRequest[]
+    return (res.requests ?? []) as RefillRequest[]
   })
 }
 
@@ -136,7 +135,7 @@ export function DoctorDashboard() {
   const [rejectionReason, setRejectionReason] = useState("")
   const [processingRefill, setProcessingRefill] = useState<string | null>(null)
 
-  const selectedPatient = patients.find((p) => p.id === selectedPatientId)
+  const selectedPatient = patients.find((p: PatientSummary) => p.id === selectedPatientId)
   const filledMedications = medications.filter((m) => m.name)
 
   function updateMedication(index: number, field: "name" | "dosage", value: string) {
@@ -168,7 +167,7 @@ export function DoctorDashboard() {
 
     setAssessing(true)
     try {
-      const res = await runRiskAssessment(medNames, selectedPatientId)
+      const res = await runRiskAssessment(medNames, selectedPatient?.allergies || [])
       if (res.error) {
         toast.error(res.error)
       } else if (res.assessment) {
@@ -334,10 +333,10 @@ export function DoctorDashboard() {
                       </SelectContent>
                     </Select>
 
-                    {selectedPatient && selectedPatient.allergies.length > 0 && (
+                    {!!selectedPatient && selectedPatient.allergies.length > 0 && (
                       <div className="flex flex-wrap items-center gap-1.5 pt-1">
                         <span className="text-xs text-muted-foreground">Allergies:</span>
-                        {selectedPatient.allergies.map((a: string) => (
+                        {selectedPatient.allergies.map((a) => (
                           <Badge key={a} variant="destructive" className="text-xs">
                             {a}
                           </Badge>

@@ -21,7 +21,6 @@ import {
   generateRefillRejectedEmail as generateRefillRejectedEmailTemplate,
   generateBookingConfirmationEmail,
 } from "@/src/services/emailService"
-import { runRiskAssessment as runStructuredRiskAssessment } from "./validation"
 import type {
   AuditLog,
   Booking,
@@ -46,19 +45,34 @@ function toSessionUser(session: unknown): SessionUser | null {
   if (!session || typeof session !== "object") return null
   const s = session as Record<string, unknown>
 
-  if (
-    typeof s.id !== "string" ||
-    typeof s.name !== "string" ||
-    typeof s.role !== "string"
-  ) {
+  const id =
+    typeof s.id === "string"
+      ? s.id
+      : typeof s.uid === "string"
+        ? s.uid
+        : null
+
+  const name =
+    typeof s.name === "string"
+      ? s.name
+      : typeof s.displayName === "string"
+        ? s.displayName
+        : null
+
+  const role =
+    typeof s.role === "string"
+      ? s.role
+      : null
+
+  if (!id || !name || !role) {
     return null
   }
 
   return {
-    id: s.id,
-    name: s.name,
+    id,
+    name,
     email: typeof s.email === "string" ? s.email : "",
-    role: s.role as SessionUser["role"],
+    role: role as SessionUser["role"],
   }
 }
 
@@ -274,25 +288,104 @@ export async function getPatientList() {
 
 export async function runRiskAssessment(
   medications: string[],
-  patientId: string
+  patientAllergies: string[] = []
 ): Promise<{ assessment?: RiskAssessmentResult; error?: string }> {
-  const rawSession = await getSession()
-  const session = toSessionUser(rawSession)
+  try {
+    const issues: RiskAssessmentResult["issues"] = []
+    const apiKey = process.env.OPENFDA_API_KEY
 
-  if (!session || session.role !== "doctor") {
-    return { error: "Unauthorized" }
+    const fetchDrugLabel = async (drugName: string) => {
+      const search = encodeURIComponent(
+        `openfda.brand_name:"${drugName}" OR openfda.generic_name:"${drugName}"`
+      )
+
+      const baseUrl = "https://api.fda.gov/drug/label.json"
+      const url = apiKey
+        ? `${baseUrl}?api_key=${apiKey}&search=${search}&limit=1`
+        : `${baseUrl}?search=${search}&limit=1`
+
+      const res = await fetch(url, {
+        method: "GET",
+        cache: "no-store",
+      })
+
+      if (!res.ok) {
+        return null
+      }
+
+      const data = await res.json()
+      return data?.results?.[0] ?? null
+    }
+
+    const labels = await Promise.all(
+      medications.map(async (name) => ({
+        name,
+        label: await fetchDrugLabel(name),
+      }))
+    )
+
+    for (const { name, label } of labels) {
+      if (!label) continue
+
+      const labelText = [
+        ...(Array.isArray(label.contraindications) ? label.contraindications : []),
+        ...(Array.isArray(label.warnings) ? label.warnings : []),
+        ...(Array.isArray(label.warnings_and_cautions) ? label.warnings_and_cautions : []),
+        ...(Array.isArray(label.active_ingredient) ? label.active_ingredient : []),
+      ]
+        .join(" ")
+        .toLowerCase()
+
+      for (const allergy of patientAllergies) {
+        if (labelText.includes(allergy.toLowerCase())) {
+          issues.push({
+            code: "ALLERGY_CONFLICT",
+            severity: "high",
+            message: `${name} may conflict with patient allergy: ${allergy}`,
+            medicationName: name,
+          })
+        }
+      }
+    }
+
+    for (let i = 0; i < labels.length; i++) {
+      for (let j = i + 1; j < labels.length; j++) {
+        const medA = labels[i]
+        const medB = labels[j]
+
+        if (!medA.label) continue
+
+        const interactionText = [
+          ...(Array.isArray(medA.label.drug_interactions) ? medA.label.drug_interactions : []),
+        ]
+          .join(" ")
+          .toLowerCase()
+
+        if (interactionText.includes(medB.name.toLowerCase())) {
+          issues.push({
+            code: "DRUG_INTERACTION",
+            severity: "medium",
+            message: `Potential interaction between ${medA.name} and ${medB.name}`,
+          })
+        }
+      }
+    }
+
+    const hasHigh = issues.some((issue) => issue.severity === "high")
+    const hasMedium = issues.some((issue) => issue.severity === "medium")
+
+    return {
+      assessment: {
+        issues,
+        status: hasHigh ? "unsafe" : hasMedium ? "review" : "safe",
+      },
+    }
+  } catch (error) {
+    console.error("runRiskAssessment error:", error)
+    return { error: "Failed to run risk assessment" }
   }
-
-  const patient = await getUserById(patientId)
-  if (!patient) return { error: "Patient not found" }
-
-  const assessment = await runStructuredRiskAssessment({
-    medications: medications.map((name) => ({ name, dosage: "" })),
-    patientAllergies: patient.allergies || [],
-  })
-
-  return { assessment }
 }
+
 
 export async function submitPrescription(
   patientId: string,
