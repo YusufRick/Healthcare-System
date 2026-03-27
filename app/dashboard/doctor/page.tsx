@@ -10,6 +10,7 @@ import { doc, getDoc } from "firebase/firestore"
 import { auth, db } from "@/src/config/firebase"
 
 type DoctorSession = {
+  id: string
   name: string
   role: string
 }
@@ -42,6 +43,7 @@ export default function DoctorPage() {
         }
 
         setSession({
+          id: firebaseUser.uid,
           name: user.name,
           role: user.role,
         })
@@ -67,7 +69,12 @@ export default function DoctorPage() {
     <div className="min-h-screen bg-background">
       <DashboardHeader userName={session.name} userRole={session.role} />
       <main>
-        <DoctorDashboard />
+        <DoctorDashboard 
+          doctor={{
+            id: session.id,
+            name: session.name,
+          }}
+        />
         <AuditEmailLogs />
       </main>
     </div>

@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback } from "react"
 import { toast } from "sonner"
-import { collection, query, where, getDocs } from "firebase/firestore"
+import { collection, query, where, getDocs, addDoc } from "firebase/firestore"
 import { db } from "@/src/config/firebase"
 import {
   Stethoscope,
@@ -34,10 +34,7 @@ import {
 } from "@/components/ui/dialog"
 import { RiskDisplay } from "@/components/risk/risk-display"
 import {
-  getDoctorPrescriptions,
-  getDoctorRefillRequests,
   runRiskAssessment,
-  submitPrescription,
   approveRefillRequest,
   rejectRefillRequest,
 } from "@/lib/actions"
@@ -49,6 +46,11 @@ import type {
   RiskAssessmentResult,
 } from "@/lib/types"
 import useSWR, { useSWRConfig } from "swr"
+
+type DoctorContext = {
+  id: string
+  name: string
+}
 
 const AVAILABLE_MEDICATIONS = [
   "Amoxicillin",
@@ -74,53 +76,91 @@ type PatientSummary = {
 
 function usePatientsData() {
   return useSWR<PatientSummary[]>("doctor-patients", async () => {
-    try {
-      const q = query(collection(db, "users"), where("role", "==", "patient"))
-      const querySnapshot = await getDocs(q)
+    const q = query(collection(db, "users"), where("role", "==", "patient"))
+    const querySnapshot = await getDocs(q)
 
-      return querySnapshot.docs.map((doc) => {
-        const data = doc.data() as {
-          name?: string
-          email?: string
-          allergies?: unknown
-        }
+    return querySnapshot.docs.map((doc) => {
+      const data = doc.data() as {
+        name?: string
+        email?: string
+        allergies?: unknown
+      }
 
-        return {
+      return {
+        id: doc.id,
+        name: data.name ?? "",
+        email: data.email ?? "",
+        allergies: Array.isArray(data.allergies)
+          ? data.allergies.filter((a): a is string => typeof a === "string")
+          : [],
+      }
+    })
+  })
+}
+
+function usePrescriptionsData(doctorId: string) {
+  return useSWR<Prescription[]>(
+    doctorId ? ["doctor-prescriptions", doctorId] : null,
+    async () => {
+      try {
+        console.log("doctorId used for query:", doctorId)
+
+        const q = query(
+          collection(db, "prescriptions"),
+          where("doctorId", "==", doctorId)
+        )
+
+        const snapshot = await getDocs(q)
+
+        console.log("prescriptions found:", snapshot.size)
+        console.log(
+          "prescription docs:",
+          snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }))
+        )
+
+        return snapshot.docs.map((doc) => ({
           id: doc.id,
-          name: data.name ?? "",
-          email: data.email ?? "",
-          allergies: Array.isArray(data.allergies)
-            ? data.allergies.filter((a): a is string => typeof a === "string")
-            : [],
-        }
-      })
-    } catch (error) {
-      console.error("Failed to load patients:", error)
-      throw error
+          ...(doc.data() as Omit<Prescription, "id">),
+        }))
+      } catch (error) {
+        console.error("Failed to load prescriptions:", error)
+        throw error
+      }
     }
-  })
+  )
 }
 
-function usePrescriptionsData() {
-  return useSWR<Prescription[]>("doctor-prescriptions", async () => {
-    const res = await getDoctorPrescriptions()
-    if (res.error) throw new Error(res.error)
-    return (res.prescriptions ?? []) as Prescription[]
-  })
+function useRefillRequestsData(doctorId: string) {
+  return useSWR<RefillRequest[]>(
+    doctorId ? ["doctor-refill-requests", doctorId] : null,
+    async () => {
+      const q = query(
+        collection(db, "refillRequests"),
+        where("doctorId", "==", doctorId),
+        where("status", "==", "pending")
+      )
+
+      const snapshot = await getDocs(q)
+
+      return snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...(doc.data() as Omit<RefillRequest, "id">),
+      }))
+    }
+  )
 }
 
-function useRefillRequestsData() {
-  return useSWR<RefillRequest[]>("doctor-refill-requests", async () => {
-    const res = await getDoctorRefillRequests()
-    if (res.error) throw new Error(res.error)
-    return (res.requests ?? []) as RefillRequest[]
-  })
-}
-
-export function DoctorDashboard() {
+export function DoctorDashboard({ doctor }: { doctor: DoctorContext }) {
   const { data: patients = [] } = usePatientsData()
-  const { data: prescriptions = [], mutate: mutatePrescriptions } = usePrescriptionsData()
-  const { data: refillRequests = [], mutate: mutateRefillRequests } = useRefillRequestsData()
+const {
+  data: prescriptions = [],
+  mutate: mutatePrescriptions,
+  error: prescriptionsError,
+} = usePrescriptionsData(doctor.id)
+  const { data: refillRequests = [], mutate: mutateRefillRequests } = useRefillRequestsData(doctor.id)
   const { mutate: globalMutate } = useSWRConfig()
 
   const [selectedPatientId, setSelectedPatientId] = useState("")
@@ -135,7 +175,7 @@ export function DoctorDashboard() {
   const [rejectionReason, setRejectionReason] = useState("")
   const [processingRefill, setProcessingRefill] = useState<string | null>(null)
 
-  const selectedPatient = patients.find((p: PatientSummary) => p.id === selectedPatientId)
+  const selectedPatient = patients.find((p) => p.id === selectedPatientId)
   const filledMedications = medications.filter((m) => m.name)
 
   function updateMedication(index: number, field: "name" | "dosage", value: string) {
@@ -167,7 +207,7 @@ export function DoctorDashboard() {
 
     setAssessing(true)
     try {
-      const res = await runRiskAssessment(medNames, selectedPatient?.allergies || [])
+      const res = await runRiskAssessment(medNames, selectedPatient?.allergies ?? [])
       if (res.error) {
         toast.error(res.error)
       } else if (res.assessment) {
@@ -184,7 +224,7 @@ export function DoctorDashboard() {
     } finally {
       setAssessing(false)
     }
-  }, [medications, selectedPatientId])
+  }, [medications, selectedPatientId, selectedPatient])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -193,6 +233,11 @@ export function DoctorDashboard() {
 
     if (!selectedPatientId || validMeds.length === 0) {
       toast.error("Please select a patient and add at least one medication with dosage")
+      return
+    }
+
+    if (!selectedPatient) {
+      toast.error("Patient not found")
       return
     }
 
@@ -208,19 +253,50 @@ export function DoctorDashboard() {
 
     setLoading(true)
     try {
-      const res = await submitPrescription(selectedPatientId, formattedMeds, notes, riskResult)
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Prescription confirmed successfully")
-        setSelectedPatientId("")
-        setMedications([{ name: "", dosage: "" }])
-        setNotes("")
-        setRiskResult(null)
-        mutatePrescriptions()
-        globalMutate("audit-logs")
-        globalMutate("email-logs")
+      await addDoc(collection(db, "prescriptions"), {
+        doctorId: doctor.id,
+        patientId: selectedPatientId,
+        patientName: selectedPatient.name,
+        medications: formattedMeds,
+        notes,
+        riskAssessment: riskResult,
+        status: "confirmed",
+        createdAt: new Date().toISOString(),
+      })
+
+      await addDoc(collection(db, "auditLogs"), {
+        userId: doctor.id,
+        userName: doctor.name,
+        action: "Prescription Confirmed",
+        details: `Prescription for ${selectedPatient.name}: ${formattedMeds
+          .map((m) => `${m.name} ${m.dosage}`)
+          .join(", ")}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      if (riskResult) {
+        await addDoc(collection(db, "auditLogs"), {
+          userId: doctor.id,
+          userName: doctor.name,
+          action: "Risk Assessment",
+          details: `Risk: ${riskResult.status} for ${formattedMeds
+            .map((m) => `${m.name} ${m.dosage}`)
+            .join(", ")} - ${selectedPatient.name}`,
+          timestamp: new Date().toISOString(),
+        })
       }
+
+      toast.success("Prescription confirmed successfully")
+      setSelectedPatientId("")
+      setMedications([{ name: "", dosage: "" }])
+      setNotes("")
+      setRiskResult(null)
+      mutatePrescriptions()
+      globalMutate("audit-logs")
+      globalMutate("email-logs")
+    } catch (error) {
+      console.error("Submit prescription failed:", error)
+      toast.error("Failed to confirm prescription")
     } finally {
       setLoading(false)
     }
@@ -229,7 +305,7 @@ export function DoctorDashboard() {
   async function handleApproveRefill(requestId: string) {
     setProcessingRefill(requestId)
     try {
-      const res = await approveRefillRequest(requestId)
+      const res = await approveRefillRequest(doctor.id, doctor.name, requestId)
       if (res.error) {
         toast.error(res.error)
       } else {
@@ -258,7 +334,12 @@ export function DoctorDashboard() {
 
     setProcessingRefill(selectedRefillRequest.id)
     try {
-      const res = await rejectRefillRequest(selectedRefillRequest.id, rejectionReason.trim())
+      const res = await rejectRefillRequest(
+        doctor.id,
+        doctor.name,
+        selectedRefillRequest.id,
+        rejectionReason.trim()
+      )
       if (res.error) {
         toast.error(res.error)
       } else {

@@ -7,24 +7,37 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { fetchAuditLogs, fetchEmailLogs } from "@/lib/actions"
 import type { AuditLog, EmailLog } from "@/lib/types"
 import useSWR from "swr"
+import { collection, getDocs } from "firebase/firestore"
+import { db } from "@/src/config/firebase"
 
 function useAuditLogs() {
-  return useSWR("audit-logs", async () => {
-    const res = await fetchAuditLogs()
-    if (res.error) throw new Error(res.error)
-    return res.logs || []
-  }, { refreshInterval: 3000 })
+  return useSWR<AuditLog[]>(
+    "audit-logs",
+    async () => {
+      const snapshot = await getDocs(collection(db, "auditLogs"))
+      return snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...(doc.data() as Omit<AuditLog, "id">),
+      }))
+    },
+    { refreshInterval: 3000 }
+  )
 }
 
 function useEmailLogs() {
-  return useSWR("email-logs", async () => {
-    const res = await fetchEmailLogs()
-    if (res.error) throw new Error(res.error)
-    return res.logs || []
-  }, { refreshInterval: 3000 })
+  return useSWR<EmailLog[]>(
+    "email-logs",
+    async () => {
+      const snapshot = await getDocs(collection(db, "emailLogs"))
+      return snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...(doc.data() as Omit<EmailLog, "id">),
+      }))
+    },
+    { refreshInterval: 3000 }
+  )
 }
 
 export function AuditEmailLogs() {
@@ -46,6 +59,7 @@ export function AuditEmailLogs() {
           Refresh
         </Button>
       </div>
+
       <Tabs defaultValue="audit">
         <TabsList>
           <TabsTrigger value="audit">
@@ -144,7 +158,7 @@ function EmailLogCard({ log }: { log: EmailLog }) {
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center justify-between p-3 text-left hover:bg-muted/50 transition-colors"
+        className="flex w-full items-center justify-between p-3 text-left transition-colors hover:bg-muted/50"
       >
         <div className="space-y-1">
           <div className="flex items-center gap-2">
@@ -162,6 +176,7 @@ function EmailLogCard({ log }: { log: EmailLog }) {
           <ChevronDown className="h-4 w-4 text-muted-foreground" />
         )}
       </button>
+
       {expanded && (
         <div className="border-t border-border p-4">
           <div

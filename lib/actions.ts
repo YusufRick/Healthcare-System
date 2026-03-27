@@ -388,16 +388,15 @@ export async function runRiskAssessment(
 
 
 export async function submitPrescription(
+  doctorId: string,
+  doctorName: string,
   patientId: string,
   medications: PrescribedMedication[],
   notes: string,
   riskAssessment: RiskAssessmentResult | null
 ) {
-  const rawSession = await getSession()
-  const session = toSessionUser(rawSession)
-
-  if (!session || session.role !== "doctor") {
-    return { error: "Unauthorized" }
+  if (!doctorId || !doctorName) {
+    return { error: "Missing doctor details" }
   }
 
   const patient = await getUserById(patientId)
@@ -406,7 +405,7 @@ export async function submitPrescription(
   }
 
   const prescriptionRef = await addDoc(collection(db, "prescriptions"), {
-    doctorId: session.id,
+    doctorId,
     patientId,
     patientName: patient.name,
     medications,
@@ -419,16 +418,16 @@ export async function submitPrescription(
   const medSummary = medications.map((m) => `${m.name} ${m.dosage}`).join(", ")
 
   await addAuditLog(
-    session.id,
-    session.name,
+    doctorId,
+    doctorName,
     "Prescription Confirmed",
     `Prescription ${prescriptionRef.id} for ${patient.name}: ${medSummary}`
   )
 
   if (riskAssessment) {
     await addAuditLog(
-      session.id,
-      session.name,
+      doctorId,
+      doctorName,
       "Risk Assessment",
       `Risk: ${riskAssessment.status} for ${medSummary} - ${patient.name}`
     )
@@ -439,17 +438,14 @@ export async function submitPrescription(
   }
 }
 
-export async function getDoctorPrescriptions() {
-  const rawSession = await getSession()
-  const session = toSessionUser(rawSession)
-
-  if (!session || session.role !== "doctor") {
-    return { error: "Unauthorized" }
+export async function getDoctorPrescriptions(doctorId: string) {
+  if (!doctorId) {
+    return { error: "Missing doctor id" }
   }
 
   const q = query(
     collection(db, "prescriptions"),
-    where("doctorId", "==", session.id)
+    where("doctorId", "==", doctorId)
   )
 
   const snapshot = await getDocs(q)
@@ -458,17 +454,14 @@ export async function getDoctorPrescriptions() {
   return { prescriptions }
 }
 
-export async function getDoctorRefillRequests() {
-  const rawSession = await getSession()
-  const session = toSessionUser(rawSession)
-
-  if (!session || session.role !== "doctor") {
-    return { error: "Unauthorized" }
+export async function getDoctorRefillRequests(doctorId: string) {
+  if (!doctorId) {
+    return { error: "Missing doctor id" }
   }
 
   const q = query(
     collection(db, "refillRequests"),
-    where("doctorId", "==", session.id),
+    where("doctorId", "==", doctorId),
     where("status", "==", "pending")
   )
 
@@ -478,20 +471,21 @@ export async function getDoctorRefillRequests() {
   return { requests }
 }
 
-export async function approveRefillRequest(requestId: string) {
-  const rawSession = await getSession()
-  const session = toSessionUser(rawSession)
-
-  if (!session || session.role !== "doctor") {
-    return { error: "Unauthorized" }
+export async function approveRefillRequest(
+  doctorId: string,
+  doctorName: string,
+  requestId: string
+) {
+  if (!doctorId || !doctorName) {
+    return { error: "Missing doctor details" }
   }
 
   const request = await getRefillRequestById(requestId)
   if (!request) return { error: "Refill request not found" }
-  if (request.doctorId !== session.id) return { error: "Unauthorized" }
+  if (request.doctorId !== doctorId) return { error: "Unauthorized" }
 
   const rxRef = await addDoc(collection(db, "prescriptions"), {
-    doctorId: session.id,
+    doctorId,
     patientId: request.patientId,
     patientName: request.patientName,
     clinicId: "",
@@ -507,8 +501,8 @@ export async function approveRefillRequest(requestId: string) {
   const medSummary = request.medications.map((m) => m.name).join(", ")
 
   await addAuditLog(
-    session.id,
-    session.name,
+    doctorId,
+    doctorName,
     "Refill Approved",
     `Approved refill request ${requestId} for ${request.patientName}: ${medSummary}`
   )
@@ -538,27 +532,26 @@ export async function approveRefillRequest(requestId: string) {
 }
 
 export async function rejectRefillRequest(
+  doctorId: string,
+  doctorName: string,
   requestId: string,
   rejectionReason: string
 ) {
-  const rawSession = await getSession()
-  const session = toSessionUser(rawSession)
-
-  if (!session || session.role !== "doctor") {
-    return { error: "Unauthorized" }
+  if (!doctorId || !doctorName) {
+    return { error: "Missing doctor details" }
   }
 
   const request = await getRefillRequestById(requestId)
   if (!request) return { error: "Refill request not found" }
-  if (request.doctorId !== session.id) return { error: "Unauthorized" }
+  if (request.doctorId !== doctorId) return { error: "Unauthorized" }
 
   await updateRefillRequestStatus(requestId, "rejected", rejectionReason)
 
   const medSummary = request.medications.map((m) => m.name).join(", ")
 
   await addAuditLog(
-    session.id,
-    session.name,
+    doctorId,
+    doctorName,
     "Refill Rejected",
     `Rejected refill request ${requestId} for ${request.patientName}: ${medSummary}. Reason: ${rejectionReason}`
   )
