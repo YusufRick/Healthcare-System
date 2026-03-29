@@ -3,6 +3,17 @@
 import React, { useState } from "react"
 import { toast } from "sonner"
 import {
+  collection,
+  query,
+  where,
+  getDocs,
+  getDoc,
+  addDoc,
+  doc,
+  updateDoc,
+} from "firebase/firestore"
+import { db } from "@/src/config/firebase"
+import {
   Building2,
   CalendarClock,
   Send,
@@ -10,6 +21,7 @@ import {
   CheckCircle2,
   Clock,
   Package,
+  UserRound,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -27,13 +39,13 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { RiskDisplay } from "@/components/risk/risk-display"
-import {
-  getClinicPrescriptions,
-  submitBooking,
-  getClinicPrescriptionHistory,
-} from "@/lib/actions"
-import type { Prescription, Booking } from "@/lib/types"
+import type { Prescription, Booking, User } from "@/lib/types"
 import useSWR, { useSWRConfig } from "swr"
+
+type ClinicContext = {
+  id: string
+  name: string
+}
 
 const PHARMACIES = [
   "Central Pharmacy - Main Building",
@@ -54,27 +66,82 @@ const TIME_SLOTS = [
 interface HistoryItem {
   prescription: Prescription
   booking: Booking | null
+  doctorName: string
+  doctorEmail: string
 }
 
 function useClinicPrescriptions() {
   return useSWR<Prescription[]>("clinic-prescriptions", async () => {
-    const res = await getClinicPrescriptions()
-    if (res.error) throw new Error(res.error)
-    return (res.prescriptions || []) as Prescription[]
+    const q = query(
+      collection(db, "prescriptions"),
+      where("status", "==", "confirmed")
+    )
+
+    const snapshot = await getDocs(q)
+
+    return snapshot.docs.map((docSnap) => ({
+      id: docSnap.id,
+      ...(docSnap.data() as Omit<Prescription, "id">),
+    }))
   })
 }
 
 function usePrescriptionHistory() {
   return useSWR<HistoryItem[]>("clinic-prescription-history", async () => {
-    const res = await getClinicPrescriptionHistory()
-    if (res.error) throw new Error(res.error)
-    return (res.history || []) as HistoryItem[]
+    const prescriptionSnap = await getDocs(collection(db, "prescriptions"))
+
+    const prescriptions = prescriptionSnap.docs.map((docSnap) => ({
+      id: docSnap.id,
+      ...(docSnap.data() as Omit<Prescription, "id">),
+    })) as Prescription[]
+
+    const history = await Promise.all(
+      prescriptions.map(async (rx) => {
+        const bookingQuery = query(
+          collection(db, "bookings"),
+          where("prescriptionId", "==", rx.id)
+        )
+        const bookingSnap = await getDocs(bookingQuery)
+
+        const booking = bookingSnap.empty
+          ? null
+          : ({
+              id: bookingSnap.docs[0].id,
+              ...(bookingSnap.docs[0].data() as Omit<Booking, "id">),
+            } as Booking)
+
+        let doctorName = "Unknown Doctor"
+        let doctorEmail = ""
+
+        if (rx.doctorId) {
+          const doctorSnap = await getDoc(doc(db, "users", rx.doctorId))
+          if (doctorSnap.exists()) {
+            const doctor = doctorSnap.data() as Omit<User, "id">
+            doctorName = doctor.name ?? "Unknown Doctor"
+            doctorEmail = doctor.email ?? ""
+          }
+        }
+
+        return {
+          prescription: rx,
+          booking,
+          doctorName,
+          doctorEmail,
+        }
+      })
+    )
+
+    return history.sort(
+      (a, b) =>
+        new Date(b.prescription.createdAt).getTime() -
+        new Date(a.prescription.createdAt).getTime()
+    )
   })
 }
 
-export function ClinicDashboard() {
-  const { data: prescriptions = [], mutate } = useClinicPrescriptions()
-  const { data: history = [] } = usePrescriptionHistory()
+export function ClinicDashboard({ clinic }: { clinic: ClinicContext }) {
+  const { data: prescriptions = [], mutate: mutatePrescriptions } = useClinicPrescriptions()
+  const { data: history = [], mutate: mutateHistory } = usePrescriptionHistory()
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-6">
@@ -124,8 +191,12 @@ export function ClinicDashboard() {
               {prescriptions.map((rx) => (
                 <PrescriptionBookingCard
                   key={rx.id}
+                  clinic={clinic}
                   prescription={rx}
-                  onBooked={() => mutate()}
+                  onBooked={() => {
+                    mutatePrescriptions()
+                    mutateHistory()
+                  }}
                 />
               ))}
             </div>
@@ -160,9 +231,11 @@ export function ClinicDashboard() {
 }
 
 function PrescriptionBookingCard({
+  clinic,
   prescription,
   onBooked,
 }: {
+  clinic: ClinicContext
   prescription: Prescription
   onBooked: () => void
 }) {
@@ -185,27 +258,44 @@ function PrescriptionBookingCard({
     setLoading(true)
     try {
       const formattedPickup = `${pickupDate} ${pickupTime}`
-      const res = await submitBooking(
-        prescription.id,
-        patientEmail,
-        formattedPickup,
-        pharmacyName
-      )
 
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Booking created successfully")
-        setOpen(false)
-        setPatientEmail("")
-        setPickupDate("")
-        setPickupTime("")
-        setPharmacyName("")
-        onBooked()
-        globalMutate("clinic-prescription-history")
-        globalMutate("audit-logs")
-        globalMutate("email-logs")
-      }
+      const bookingRef = await addDoc(collection(db, "bookings"), {
+        prescriptionId: prescription.id,
+        patientEmail,
+        pickupTime: formattedPickup,
+        pharmacyName,
+        createdById: clinic.id,
+        createdByRole: "clinic_staff",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      })
+
+      await updateDoc(doc(db, "prescriptions", prescription.id), {
+        status: "booked",
+      })
+
+      await addDoc(collection(db, "auditLogs"), {
+        userId: clinic.id,
+        userName: clinic.name,
+        action: "Booking Created",
+        details: `Booking ${bookingRef.id} for prescription ${prescription.id} at ${pharmacyName}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      toast.success("Booking created successfully")
+      setOpen(false)
+      setPatientEmail("")
+      setPickupDate("")
+      setPickupTime("")
+      setPharmacyName("")
+      onBooked()
+      globalMutate("clinic-prescriptions")
+      globalMutate("clinic-prescription-history")
+      globalMutate("audit-logs")
+      globalMutate("email-logs")
+    } catch (error) {
+      console.error("Create booking failed:", error)
+      toast.error("Failed to create booking")
     } finally {
       setLoading(false)
     }
@@ -345,7 +435,7 @@ function PrescriptionBookingCard({
 }
 
 function PrescriptionHistoryCard({ item }: { item: HistoryItem }) {
-  const { prescription: rx, booking } = item
+  const { prescription: rx, booking, doctorName, doctorEmail } = item
 
   const statusVariants: Record<string, string> = {
     confirmed: "bg-[hsl(200,80%,92%)] text-[hsl(200,80%,30%)]",
@@ -382,6 +472,22 @@ function PrescriptionHistoryCard({ item }: { item: HistoryItem }) {
                 <span className="mr-1">{statusIcons[rx.status]}</span>
                 {statusLabels[rx.status] || rx.status}
               </Badge>
+            </div>
+
+            <div className="rounded-lg bg-muted p-3">
+              <div className="flex items-center gap-2 text-sm text-foreground">
+                <UserRound className="h-4 w-4" />
+                <span className="font-medium">Doctor:</span>
+                <span>{doctorName}</span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Doctor ID: {rx.doctorId}
+              </p>
+              {doctorEmail && (
+                <p className="text-xs text-muted-foreground">
+                  Doctor Email: {doctorEmail}
+                </p>
+              )}
             </div>
 
             <div className="space-y-0.5">

@@ -583,12 +583,9 @@ export async function rejectRefillRequest(
 
 // --- Clinic Staff Actions ---
 
-export async function getClinicPrescriptions() {
-  const rawSession = await getSession()
-  const session = toSessionUser(rawSession)
-
-  if (!session || session.role !== "clinic_staff") {
-    return { error: "Unauthorized" }
+export async function getClinicPrescriptions(clinincId: string) {
+  if (!clinincId) {
+    return { error: "Missing clinic id" }
   }
 
   const q = query(
@@ -601,6 +598,8 @@ export async function getClinicPrescriptions() {
 
   return { prescriptions }
 }
+
+
 
 export async function getClinicPrescriptionHistory() {
   const rawSession = await getSession()

@@ -10,6 +10,7 @@ import { ClinicDashboard } from "@/components/dashboards/clinic/clinic-dashboard
 import { AuditEmailLogs } from "@/components/audit/audit-email-logs"
 
 type ClinicSession = {
+  id: string
   name: string
   role: string
 }
@@ -42,6 +43,7 @@ export default function ClinicPage() {
         }
 
         setSession({
+          id: firebaseUser.uid,
           name: user.name,
           role: user.role,
         })
@@ -67,7 +69,12 @@ export default function ClinicPage() {
     <div className="min-h-screen bg-background">
       <DashboardHeader userName={session.name} userRole={session.role} />
       <main>
-        <ClinicDashboard />
+        <ClinicDashboard
+          clinic={{
+            id: session.id,
+            name: session.name,
+          }}
+        />
         <AuditEmailLogs />
       </main>
     </div>

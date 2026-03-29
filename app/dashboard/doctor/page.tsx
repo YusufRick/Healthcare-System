@@ -75,7 +75,7 @@ export default function DoctorPage() {
             name: session.name,
           }}
         />
-        <AuditEmailLogs />
+        <AuditEmailLogs /> 
       </main>
     </div>
   )
