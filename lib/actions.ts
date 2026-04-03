@@ -651,6 +651,32 @@ export async function submitBooking(
 
   await updatePrescriptionStatus(prescriptionId, "booked")
 
+  const emailSubject = "Prescription Pickup Booking Confirmation"
+  const emailBody = `Hello ${rx.patientName},
+
+Your booking has been created successfully.
+
+Pickup time: ${pickupTime}
+Pharmacy: ${pharmacyName}
+
+This is a prototype email record stored in Firestore.
+`
+
+  await addDoc(collection(db, "emailLogs"), {
+    to: patientEmail,
+    patientName: rx.patientName,
+    bookingId: bookingRef.id,
+    prescriptionId,
+    type: "booking_confirmation",
+    subject: emailSubject,
+    body: emailBody,
+    status: "queued",
+    deliveryMode: "prototype_firestore",
+    createdAt: new Date().toISOString(),
+    createdById: session.id,
+    createdByRole: "clinic_staff",
+  })
+
   await addAuditLog(
     session.id,
     session.name,

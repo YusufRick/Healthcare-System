@@ -167,7 +167,7 @@ function EmailLogCard({ log }: { log: EmailLog }) {
           </div>
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <span>To: {log.to}</span>
-            <span>{new Date(log.sentAt).toLocaleString()}</span>
+            <span>{new Date(log.createdAt).toLocaleString()}</span>
           </div>
         </div>
         {expanded ? (

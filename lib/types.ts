@@ -134,7 +134,7 @@ export interface EmailLog {
   to: string
   subject: string
   body: string
-  sentAt: string
+  createdAt: string
 }
 
 export interface RefillRequest {

@@ -401,7 +401,7 @@ export function addAuditLog(userId: string, userName: string, action: string, de
 // --- Email Log Operations ---
 
 export function getEmailLogs(): EmailLog[] {
-  return emailLogs.sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime())
+  return emailLogs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 }
 
 export function addEmailLog(to: string, subject: string, body: string): EmailLog {
@@ -410,7 +410,7 @@ export function addEmailLog(to: string, subject: string, body: string): EmailLog
     to,
     subject,
     body,
-    sentAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
   }
   emailLogs.push(log)
   return log
