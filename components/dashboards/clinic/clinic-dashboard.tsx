@@ -7,7 +7,6 @@ import {
   query,
   where,
   getDocs,
-  getDoc,
   addDoc,
   doc,
   updateDoc,
@@ -21,13 +20,18 @@ import {
   CheckCircle2,
   Clock,
   Package,
-  UserRound,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -39,7 +43,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { RiskDisplay } from "@/components/risk/risk-display"
-import type { Prescription, Booking, User } from "@/lib/types"
+import type { Prescription, Booking } from "@/lib/types"
 import useSWR, { useSWRConfig } from "swr"
 
 type ClinicContext = {
@@ -63,13 +67,6 @@ const TIME_SLOTS = [
   "16:00 - 17:00",
 ]
 
-interface HistoryItem {
-  prescription: Prescription
-  booking: Booking | null
-  doctorName: string
-  doctorEmail: string
-}
-
 function useClinicPrescriptions() {
   return useSWR<Prescription[]>("clinic-prescriptions", async () => {
     const q = query(
@@ -86,69 +83,47 @@ function useClinicPrescriptions() {
   })
 }
 
-function usePrescriptionHistory() {
-  return useSWR<HistoryItem[]>("clinic-prescription-history", async () => {
-    const prescriptionSnap = await getDocs(collection(db, "prescriptions"))
+function useBookingHistory() {
+  return useSWR<Booking[]>("clinic-booking-history", async () => {
+    try {
+      const snapshot = await getDocs(collection(db, "bookings"))
 
-    const prescriptions = prescriptionSnap.docs.map((docSnap) => ({
-      id: docSnap.id,
-      ...(docSnap.data() as Omit<Prescription, "id">),
-    })) as Prescription[]
+      const bookings = snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<Booking, "id">),
+      })) as Booking[]
 
-    const history = await Promise.all(
-      prescriptions.map(async (rx) => {
-        const bookingQuery = query(
-          collection(db, "bookings"),
-          where("prescriptionId", "==", rx.id)
-        )
-        const bookingSnap = await getDocs(bookingQuery)
-
-        const booking = bookingSnap.empty
-          ? null
-          : ({
-              id: bookingSnap.docs[0].id,
-              ...(bookingSnap.docs[0].data() as Omit<Booking, "id">),
-            } as Booking)
-
-        let doctorName = "Unknown Doctor"
-        let doctorEmail = ""
-
-        if (rx.doctorId) {
-          const doctorSnap = await getDoc(doc(db, "users", rx.doctorId))
-          if (doctorSnap.exists()) {
-            const doctor = doctorSnap.data() as Omit<User, "id">
-            doctorName = doctor.name ?? "Unknown Doctor"
-            doctorEmail = doctor.email ?? ""
-          }
-        }
-
-        return {
-          prescription: rx,
-          booking,
-          doctorName,
-          doctorEmail,
-        }
-      })
-    )
-
-    return history.sort(
-      (a, b) =>
-        new Date(b.prescription.createdAt).getTime() -
-        new Date(a.prescription.createdAt).getTime()
-    )
+      return bookings.sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      )
+    } catch (error) {
+      console.error("Failed to load booking history:", error)
+      throw error
+    }
   })
 }
 
 export function ClinicDashboard({ clinic }: { clinic: ClinicContext }) {
-  const { data: prescriptions = [], mutate: mutatePrescriptions } = useClinicPrescriptions()
-  const { data: history = [], mutate: mutateHistory } = usePrescriptionHistory()
+  const {
+    data: prescriptions = [],
+    mutate: mutatePrescriptions,
+  } = useClinicPrescriptions()
+
+  const {
+    data: history = [],
+    error: historyError,
+    mutate: mutateHistory,
+  } = useBookingHistory()
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-6">
       <div className="flex items-center gap-3">
         <Building2 className="h-6 w-6 text-primary" />
         <div>
-          <h2 className="text-xl font-semibold text-foreground">Clinic Staff Dashboard</h2>
+          <h2 className="text-xl font-semibold text-foreground">
+            Clinic Staff Dashboard
+          </h2>
           <p className="text-sm text-muted-foreground">
             Manage confirmed prescriptions and create pickup bookings
           </p>
@@ -166,9 +141,10 @@ export function ClinicDashboard({ clinic }: { clinic: ClinicContext }) {
               </Badge>
             )}
           </TabsTrigger>
+
           <TabsTrigger value="history">
             <ClipboardList className="mr-1.5 h-4 w-4" />
-            Prescription History ({history.length})
+            Booking History ({history.length})
           </TabsTrigger>
         </TabsList>
 
@@ -177,9 +153,12 @@ export function ClinicDashboard({ clinic }: { clinic: ClinicContext }) {
             <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                 <CalendarClock className="mb-3 h-10 w-10 text-muted-foreground" />
-                <p className="font-medium text-card-foreground">No Confirmed Prescriptions</p>
+                <p className="font-medium text-card-foreground">
+                  No Confirmed Prescriptions
+                </p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Waiting for doctors to confirm prescriptions. They will appear here for booking.
+                  Waiting for doctors to confirm prescriptions. They will appear
+                  here for booking.
                 </p>
               </CardContent>
             </Card>
@@ -188,6 +167,7 @@ export function ClinicDashboard({ clinic }: { clinic: ClinicContext }) {
               <p className="text-sm text-muted-foreground">
                 {prescriptions.length} confirmed prescription(s) awaiting booking
               </p>
+
               {prescriptions.map((rx) => (
                 <PrescriptionBookingCard
                   key={rx.id}
@@ -204,23 +184,37 @@ export function ClinicDashboard({ clinic }: { clinic: ClinicContext }) {
         </TabsContent>
 
         <TabsContent value="history" className="space-y-4">
-          {history.length === 0 ? (
+          {historyError ? (
+            <Card className="border-dashed">
+              <CardContent className="py-12 text-center">
+                <p className="font-medium text-card-foreground">
+                  Failed to load booking history
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Check the browser console for the Firestore error.
+                </p>
+              </CardContent>
+            </Card>
+          ) : history.length === 0 ? (
             <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                 <Package className="mb-3 h-10 w-10 text-muted-foreground" />
-                <p className="font-medium text-card-foreground">No Prescription History</p>
+                <p className="font-medium text-card-foreground">
+                  No Booking History
+                </p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Prescription history will appear here once prescriptions are created.
+                  Booking history will appear here once bookings are created.
                 </p>
               </CardContent>
             </Card>
           ) : (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Showing all {history.length} prescription(s)
+                Showing all {history.length} booking(s)
               </p>
-              {history.map((item) => (
-                <PrescriptionHistoryCard key={item.prescription.id} item={item} />
+
+              {history.map((booking) => (
+                <BookingHistoryCard key={booking.id} booking={booking} />
               ))}
             </div>
           )}
@@ -248,51 +242,51 @@ function PrescriptionBookingCard({
   const [loading, setLoading] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
-  e.preventDefault()
+    e.preventDefault()
 
-  if (!patientEmail || !pickupDate || !pickupTime || !pharmacyName) {
-    toast.error("Please fill in all fields")
-    return
-  }
+    if (!patientEmail || !pickupDate || !pickupTime || !pharmacyName) {
+      toast.error("Please fill in all fields")
+      return
+    }
 
-  setLoading(true)
+    setLoading(true)
 
-  try {
-    const formattedPickup = `${pickupDate} ${pickupTime}`
+    try {
+      const formattedPickup = `${pickupDate} ${pickupTime}`
 
-    const bookingRef = await addDoc(collection(db, "bookings"), {
-      prescriptionId: prescription.id,
-      patientEmail,
-      pickupTime: formattedPickup,
-      pharmacyName,
-      createdById: clinic.id,
-      createdByRole: "clinic_staff",
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    })
+      const bookingRef = await addDoc(collection(db, "bookings"), {
+        prescriptionId: prescription.id,
+        patientEmail,
+        pickupTime: formattedPickup,
+        pharmacyName,
+        createdById: clinic.id,
+        createdByRole: "clinic_staff",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      })
 
-    const expiresAt = new Date()
-    expiresAt.setMinutes(expiresAt.getMinutes() + 60)
+      const expiresAt = new Date()
+      expiresAt.setMinutes(expiresAt.getMinutes() + 60)
 
-    const qrToken =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+      const qrToken =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
-    await addDoc(collection(db, "qrCodes"), {
-      bookingId: bookingRef.id,
-      token: qrToken,
-      expiresAt: expiresAt.toISOString(),
-      used: false,
-      createdAt: new Date().toISOString(),
-    })
+      await addDoc(collection(db, "qrCodes"), {
+        bookingId: bookingRef.id,
+        token: qrToken,
+        expiresAt: expiresAt.toISOString(),
+        used: false,
+        createdAt: new Date().toISOString(),
+      })
 
-    await updateDoc(doc(db, "prescriptions", prescription.id), {
-      status: "booked",
-    })
+      await updateDoc(doc(db, "prescriptions", prescription.id), {
+        status: "booked",
+      })
 
-    const emailSubject = "Prescription Pickup Booking Confirmation"
-    const emailBody = `Hello ${prescription.patientName},
+      const emailSubject = "Prescription Pickup Booking Confirmation"
+      const emailBody = `Hello ${prescription.patientName},
 
 Your prescription pickup booking has been created successfully.
 
@@ -311,50 +305,50 @@ Use this QR token when collecting your prescription to unlock the locker.
 This is a prototype email record stored in Firestore.
 `
 
-    await addDoc(collection(db, "emailLogs"), {
-      to: patientEmail,
-      patientName: prescription.patientName,
-      bookingId: bookingRef.id,
-      prescriptionId: prescription.id,
-      type: "booking_confirmation",
-      subject: emailSubject,
-      body: emailBody,
-      qrToken,
-      pickupTime: formattedPickup,
-      pharmacyName,
-      status: "queued",
-      deliveryMode: "prototype_firestore",
-      createdAt: new Date().toISOString(),
-      createdById: clinic.id,
-      createdByRole: "clinic_staff",
-    })
+      await addDoc(collection(db, "emailLogs"), {
+        to: patientEmail,
+        patientName: prescription.patientName,
+        bookingId: bookingRef.id,
+        prescriptionId: prescription.id,
+        type: "booking_confirmation",
+        subject: emailSubject,
+        body: emailBody,
+        qrToken,
+        pickupTime: formattedPickup,
+        pharmacyName,
+        status: "queued",
+        deliveryMode: "prototype_firestore",
+        createdAt: new Date().toISOString(),
+        createdById: clinic.id,
+        createdByRole: "clinic_staff",
+      })
 
-    await addDoc(collection(db, "auditLogs"), {
-      userId: clinic.id,
-      userName: clinic.name,
-      action: "Booking Created",
-      details: `Booking ${bookingRef.id} for prescription ${prescription.id} at ${pharmacyName}. QR token generated.`,
-      timestamp: new Date().toISOString(),
-    })
+      await addDoc(collection(db, "auditLogs"), {
+        userId: clinic.id,
+        userName: clinic.name,
+        action: "Booking Created",
+        details: `Booking ${bookingRef.id} for prescription ${prescription.id} at ${pharmacyName}. QR token generated.`,
+        timestamp: new Date().toISOString(),
+      })
 
-    toast.success("Booking created successfully")
-    setOpen(false)
-    setPatientEmail("")
-    setPickupDate("")
-    setPickupTime("")
-    setPharmacyName("")
-    onBooked()
-    globalMutate("clinic-prescriptions")
-    globalMutate("clinic-prescription-history")
-    globalMutate("audit-logs")
-    globalMutate("email-logs")
-  } catch (error) {
-    console.error("Create booking failed:", error)
-    toast.error("Failed to create booking")
-  } finally {
-    setLoading(false)
+      toast.success("Booking created successfully")
+      setOpen(false)
+      setPatientEmail("")
+      setPickupDate("")
+      setPickupTime("")
+      setPharmacyName("")
+      onBooked()
+      globalMutate("clinic-prescriptions")
+      globalMutate("clinic-booking-history")
+      globalMutate("audit-logs")
+      globalMutate("email-logs")
+    } catch (error) {
+      console.error("Create booking failed:", error)
+      toast.error("Failed to create booking")
+    } finally {
+      setLoading(false)
+    }
   }
-}
 
   const medSummary = prescription.medications.map((m) => m.name).join(", ")
 
@@ -364,7 +358,9 @@ This is a prototype email record stored in Firestore.
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
-              <p className="font-medium text-card-foreground">{prescription.patientName}</p>
+              <p className="font-medium text-card-foreground">
+                {prescription.patientName}
+              </p>
               <Badge className="bg-[hsl(200,80%,92%)] text-[hsl(200,80%,30%)] text-xs">
                 Confirmed
               </Badge>
@@ -373,13 +369,16 @@ This is a prototype email record stored in Firestore.
             <div className="space-y-0.5">
               {prescription.medications.map((med, i) => (
                 <p key={i} className="text-sm text-foreground">
-                  <span className="font-medium">{med.name}</span> &mdash; {med.dosage}
+                  <span className="font-medium">{med.name}</span> &mdash;{" "}
+                  {med.dosage}
                 </p>
               ))}
             </div>
 
             {prescription.notes && (
-              <p className="text-sm text-muted-foreground">Notes: {prescription.notes}</p>
+              <p className="text-sm text-muted-foreground">
+                Notes: {prescription.notes}
+              </p>
             )}
 
             <p className="text-xs text-muted-foreground">
@@ -404,7 +403,8 @@ This is a prototype email record stored in Firestore.
                 <DialogHeader>
                   <DialogTitle>Create Pickup Booking</DialogTitle>
                   <DialogDescription>
-                    Schedule pickup for {prescription.patientName} &mdash; {medSummary}
+                    Schedule pickup for {prescription.patientName} &mdash;{" "}
+                    {medSummary}
                   </DialogDescription>
                 </DialogHeader>
 
@@ -453,7 +453,10 @@ This is a prototype email record stored in Firestore.
 
                   <div className="space-y-2">
                     <Label>Pharmacy</Label>
-                    <Select value={pharmacyName} onValueChange={setPharmacyName}>
+                    <Select
+                      value={pharmacyName}
+                      onValueChange={setPharmacyName}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Select pharmacy" />
                       </SelectTrigger>
@@ -472,7 +475,10 @@ This is a prototype email record stored in Firestore.
                       <Label className="mb-2 block text-xs text-muted-foreground">
                         Risk Assessment (read-only)
                       </Label>
-                      <RiskDisplay assessment={prescription.riskAssessment} compact />
+                      <RiskDisplay
+                        assessment={prescription.riskAssessment}
+                        compact
+                      />
                     </div>
                   )}
 
@@ -489,28 +495,26 @@ This is a prototype email record stored in Firestore.
   )
 }
 
-function PrescriptionHistoryCard({ item }: { item: HistoryItem }) {
-  const { prescription: rx, booking, doctorName, doctorEmail } = item
-
+function BookingHistoryCard({ booking }: { booking: Booking }) {
   const statusVariants: Record<string, string> = {
-    confirmed: "bg-[hsl(200,80%,92%)] text-[hsl(200,80%,30%)]",
-    booked: "bg-[hsl(173,40%,92%)] text-[hsl(173,58%,22%)]",
+    pending: "bg-[hsl(200,80%,92%)] text-[hsl(200,80%,30%)]",
+    locker_assigned: "bg-[hsl(220,80%,92%)] text-[hsl(220,70%,30%)]",
     ready: "bg-[hsl(37,80%,92%)] text-[hsl(37,90%,30%)]",
     collected: "bg-[hsl(152,50%,92%)] text-[hsl(152,60%,25%)]",
     expired: "bg-[hsl(0,70%,95%)] text-destructive",
   }
 
   const statusLabels: Record<string, string> = {
-    confirmed: "Awaiting Booking",
-    booked: "Booked",
+    pending: "Pending",
+    locker_assigned: "Locker Assigned",
     ready: "Ready for Pickup",
     collected: "Collected",
     expired: "Expired",
   }
 
   const statusIcons: Record<string, React.ReactNode> = {
-    confirmed: <Clock className="h-3 w-3" />,
-    booked: <CalendarClock className="h-3 w-3" />,
+    pending: <Clock className="h-3 w-3" />,
+    locker_assigned: <CalendarClock className="h-3 w-3" />,
     ready: <Package className="h-3 w-3" />,
     collected: <CheckCircle2 className="h-3 w-3" />,
     expired: <Clock className="h-3 w-3" />,
@@ -522,69 +526,46 @@ function PrescriptionHistoryCard({ item }: { item: HistoryItem }) {
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 space-y-2">
             <div className="flex items-center gap-2">
-              <p className="font-medium text-card-foreground">{rx.patientName}</p>
-              <Badge className={`text-xs ${statusVariants[rx.status] || ""}`}>
-                <span className="mr-1">{statusIcons[rx.status]}</span>
-                {statusLabels[rx.status] || rx.status}
+              <p className="font-medium text-card-foreground">
+                {booking.patientEmail || "Unknown Patient"}
+              </p>
+              <Badge
+                className={`text-xs ${statusVariants[booking.status] || ""}`}
+              >
+                <span className="mr-1">{statusIcons[booking.status]}</span>
+                {statusLabels[booking.status] || booking.status}
               </Badge>
             </div>
 
-            <div className="rounded-lg bg-muted p-3">
-              <div className="flex items-center gap-2 text-sm text-foreground">
-                <UserRound className="h-4 w-4" />
-                <span className="font-medium">Doctor:</span>
-                <span>{doctorName}</span>
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Doctor ID: {rx.doctorId}
-              </p>
-              {doctorEmail && (
-                <p className="text-xs text-muted-foreground">
-                  Doctor Email: {doctorEmail}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-0.5">
-              {rx.medications.map((med, i) => (
-                <p key={i} className="text-sm text-foreground">
-                  <span className="font-medium">{med.name}</span> &mdash; {med.dosage}
-                </p>
-              ))}
-            </div>
-
-            {rx.notes && (
-              <p className="text-sm text-muted-foreground">Notes: {rx.notes}</p>
-            )}
-
             <p className="text-xs text-muted-foreground">
-              Prescribed: {new Date(rx.createdAt).toLocaleString()}
+              Booking ID: {booking.id}
             </p>
-          </div>
-
-          <div className="flex flex-col items-end gap-2">
-            {rx.riskAssessment && (
-              <RiskDisplay assessment={rx.riskAssessment} compact />
-            )}
+            <p className="text-xs text-muted-foreground">
+              Prescription ID: {booking.prescriptionId}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Created By: {booking.createdByRole}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Created At: {new Date(booking.createdAt).toLocaleString()}
+            </p>
           </div>
         </div>
 
-        {booking && (
-          <div className="mt-3 grid grid-cols-3 gap-4 rounded-lg bg-muted p-3 text-sm">
-            <div>
-              <p className="text-xs text-muted-foreground">Pickup Time</p>
-              <p className="font-medium text-foreground">{booking.pickupTime}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Pharmacy</p>
-              <p className="font-medium text-foreground">{booking.pharmacyName}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Patient Email</p>
-              <p className="font-medium text-foreground">{booking.patientEmail}</p>
-            </div>
+        <div className="mt-3 grid grid-cols-3 gap-4 rounded-lg bg-muted p-3 text-sm">
+          <div>
+            <p className="text-xs text-muted-foreground">Pickup Time</p>
+            <p className="font-medium text-foreground">{booking.pickupTime}</p>
           </div>
-        )}
+          <div>
+            <p className="text-xs text-muted-foreground">Pharmacy</p>
+            <p className="font-medium text-foreground">{booking.pharmacyName}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Patient Email</p>
+            <p className="font-medium text-foreground">{booking.patientEmail}</p>
+          </div>
+        </div>
       </CardContent>
     </Card>
   )
