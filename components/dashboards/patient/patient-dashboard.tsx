@@ -1,7 +1,19 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
+import { onAuthStateChanged } from "firebase/auth"
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  getDoc,
+  addDoc,
+  doc,
+  updateDoc,
+} from "firebase/firestore"
+import { auth, db } from "@/src/config/firebase"
 import {
   User,
   QrCode,
@@ -26,14 +38,6 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  getPatientDashboard,
-  scanQRCode,
-  closeLocker,
-  requestPrescriptionRefill,
-  getPatientRefillRequests,
-  patientBookPrescription,
-} from "@/lib/actions"
 import type {
   Prescription,
   Booking,
@@ -41,7 +45,7 @@ import type {
   Locker,
   RefillRequest,
 } from "@/lib/types"
-import useSWR from "swr"
+import useSWR, { useSWRConfig } from "swr"
 
 const PHARMACIES = [
   "Central Pharmacy - Main Building",
@@ -71,28 +75,159 @@ type PatientDashboardData = {
   patientName: string
 }
 
-function usePatientData() {
-  return useSWR<PatientDashboardData>("patient-dashboard", async () => {
-    const res = await getPatientDashboard()
-    if (res.error) throw new Error(res.error)
-    return {
-      items: (res.items || []) as PatientItem[],
-      patientName: res.patientName || "",
-    }
-  })
+function useCurrentPatient() {
+  const [patientId, setPatientId] = useState<string | null>(null)
+  const [patientName, setPatientName] = useState("")
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!firebaseUser) {
+        setPatientId(null)
+        setPatientName("")
+        setLoading(false)
+        return
+      }
+
+      try {
+        const userSnap = await getDoc(doc(db, "users", firebaseUser.uid))
+        if (!userSnap.exists()) {
+          setPatientId(null)
+          setPatientName("")
+          setLoading(false)
+          return
+        }
+
+        const user = userSnap.data() as { role?: string; name?: string }
+        if (user.role !== "patient") {
+          setPatientId(null)
+          setPatientName("")
+          setLoading(false)
+          return
+        }
+
+        setPatientId(firebaseUser.uid)
+        setPatientName(user.name || "")
+      } catch (error) {
+        console.error("Failed to load patient session:", error)
+        setPatientId(null)
+        setPatientName("")
+      } finally {
+        setLoading(false)
+      }
+    })
+
+    return () => unsubscribe()
+  }, [])
+
+  return { patientId, patientName, loading }
 }
 
-function useRefillRequests() {
-  return useSWR<RefillRequest[]>("patient-refill-requests", async () => {
-    const res = await getPatientRefillRequests()
-    if (res.error) throw new Error(res.error)
-    return (res.requests || []) as RefillRequest[]
-  })
+function usePatientData(patientId: string | null, patientName: string) {
+  return useSWR<PatientDashboardData>(
+    patientId ? ["patient-dashboard", patientId] : null,
+    async () => {
+      const prescriptionQuery = query(
+        collection(db, "prescriptions"),
+        where("patientId", "==", patientId)
+      )
+
+      const prescriptionSnap = await getDocs(prescriptionQuery)
+
+      const prescriptions = prescriptionSnap.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<Prescription, "id">),
+      })) as Prescription[]
+
+      const items = await Promise.all(
+        prescriptions.map(async (prescription) => {
+          const bookingQuery = query(
+            collection(db, "bookings"),
+            where("prescriptionId", "==", prescription.id)
+          )
+          const bookingSnap = await getDocs(bookingQuery)
+
+          const booking = bookingSnap.empty
+            ? null
+            : ({
+                id: bookingSnap.docs[0].id,
+                ...(bookingSnap.docs[0].data() as Omit<Booking, "id">),
+              } as Booking)
+
+          let qr: QRCodeType | null = null
+          let locker: Locker | null = null
+
+          if (booking) {
+            const qrQuery = query(
+              collection(db, "qrCodes"),
+              where("bookingId", "==", booking.id)
+            )
+            const qrSnap = await getDocs(qrQuery)
+            if (!qrSnap.empty) {
+              qr = {
+                id: qrSnap.docs[0].id,
+                ...(qrSnap.docs[0].data() as Omit<QRCodeType, "id">),
+              } as QRCodeType
+            }
+
+            const lockerQuery = query(
+              collection(db, "lockers"),
+              where("bookingId", "==", booking.id)
+            )
+            const lockerSnap = await getDocs(lockerQuery)
+            if (!lockerSnap.empty) {
+              locker = {
+                id: lockerSnap.docs[0].id,
+                ...(lockerSnap.docs[0].data() as Omit<Locker, "id">),
+              } as Locker
+            }
+          }
+
+          return {
+            prescription,
+            booking,
+            qr,
+            locker,
+          }
+        })
+      )
+
+      return {
+        items: items.sort(
+          (a, b) =>
+            new Date(b.prescription.createdAt).getTime() -
+            new Date(a.prescription.createdAt).getTime()
+        ),
+        patientName,
+      }
+    }
+  )
+}
+
+function useRefillRequests(patientId: string | null) {
+  return useSWR<RefillRequest[]>(
+    patientId ? ["patient-refill-requests", patientId] : null,
+    async () => {
+      const q = query(
+        collection(db, "refillRequests"),
+        where("patientId", "==", patientId)
+      )
+      const snap = await getDocs(q)
+
+      return snap.docs
+        .map((docSnap) => ({
+          id: docSnap.id,
+          ...(docSnap.data() as Omit<RefillRequest, "id">),
+        })) as RefillRequest[]
+    }
+  )
 }
 
 export function PatientDashboard() {
-  const { data, mutate } = usePatientData()
-  const { data: refillRequests = [], mutate: mutateRefills } = useRefillRequests()
+  const { mutate: globalMutate } = useSWRConfig()
+  const { patientId, patientName, loading } = useCurrentPatient()
+  const { data, mutate } = usePatientData(patientId, patientName)
+  const { data: refillRequests = [], mutate: mutateRefills } = useRefillRequests(patientId)
 
   const items = data?.items || []
 
@@ -101,6 +236,7 @@ export function PatientDashboard() {
   const [scanResult, setScanResult] = useState<{
     success?: boolean
     lockerLabel?: string
+    bookingId?: string
     error?: string
   } | null>(null)
 
@@ -123,34 +259,199 @@ export function PatientDashboard() {
       return
     }
 
+    if (!patientId) {
+      toast.error("Not authenticated")
+      return
+    }
+
     setScanning(true)
     try {
-      const res = await scanQRCode(scanToken.trim())
-      if (res.error) {
-        setScanResult({ error: res.error })
-        toast.error(res.error)
-      } else {
-        setScanResult({ success: true, lockerLabel: res.lockerLabel })
-        toast.success(`Locker ${res.lockerLabel} unlocked!`)
-        mutate()
+      const qrQuery = query(
+        collection(db, "qrCodes"),
+        where("token", "==", scanToken.trim())
+      )
+      const qrSnap = await getDocs(qrQuery)
+
+      if (qrSnap.empty) {
+        setScanResult({ error: "Invalid QR code" })
+        toast.error("Invalid QR code")
+        return
       }
+
+      const qrDoc = qrSnap.docs[0]
+      const qr = {
+        id: qrDoc.id,
+        ...(qrDoc.data() as Omit<QRCodeType, "id">),
+      } as QRCodeType
+
+      if (qr.used) {
+        setScanResult({ error: "This QR code has already been used" })
+        toast.error("This QR code has already been used")
+        return
+      }
+
+      if (new Date(qr.expiresAt) < new Date()) {
+        const bookingRef = doc(db, "bookings", qr.bookingId)
+        const bookingSnap = await getDoc(bookingRef)
+
+        if (bookingSnap.exists()) {
+          const booking = {
+            id: bookingSnap.id,
+            ...(bookingSnap.data() as Omit<Booking, "id">),
+          } as Booking
+
+          await updateDoc(bookingRef, { status: "expired" })
+
+          if (booking.prescriptionId) {
+            await updateDoc(doc(db, "prescriptions", booking.prescriptionId), {
+              status: "expired",
+            })
+          }
+
+          await addDoc(collection(db, "emailLogs"), {
+            to: booking.patientEmail,
+            bookingId: booking.id,
+            prescriptionId: booking.prescriptionId,
+            type: "expired",
+            subject: "QR Code Expired - Rebooking Required",
+            body: `Your QR code has expired. Please rebook your prescription pickup.`,
+            status: "queued",
+            deliveryMode: "prototype_firestore",
+            createdAt: new Date().toISOString(),
+            createdById: patientId,
+            createdByRole: "patient",
+          })
+        }
+
+        setScanResult({ error: "QR code has expired. Please rebook." })
+        toast.error("QR code has expired. Please rebook.")
+        mutate()
+        globalMutate("email-logs")
+        return
+      }
+
+      await updateDoc(doc(db, "qrCodes", qr.id), { used: true })
+
+      const bookingSnap = await getDoc(doc(db, "bookings", qr.bookingId))
+      if (!bookingSnap.exists()) {
+        setScanResult({ error: "Booking not found" })
+        toast.error("Booking not found")
+        return
+      }
+
+      const booking = {
+        id: bookingSnap.id,
+        ...(bookingSnap.data() as Omit<Booking, "id">),
+      } as Booking
+
+      const lockerQuery = query(
+        collection(db, "lockers"),
+        where("bookingId", "==", booking.id)
+      )
+      const lockerSnap = await getDocs(lockerQuery)
+
+      let lockerLabel = "Unknown"
+      if (!lockerSnap.empty) {
+        const lockerDoc = lockerSnap.docs[0]
+        const locker = {
+          id: lockerDoc.id,
+          ...(lockerDoc.data() as Omit<Locker, "id">),
+        } as Locker
+
+        lockerLabel = locker.label
+
+        await updateDoc(doc(db, "lockers", locker.id), {
+          status: "unlocked",
+        })
+
+        await addDoc(collection(db, "auditLogs"), {
+          userId: patientId,
+          userName: data?.patientName || "Patient",
+          action: "Locker Accessed",
+          details: `Locker ${locker.label} unlocked for booking ${booking.id}`,
+          timestamp: new Date().toISOString(),
+        })
+      }
+
+      setScanResult({
+        success: true,
+        lockerLabel,
+        bookingId: booking.id,
+      })
+      toast.success(`Locker ${lockerLabel} unlocked!`)
+      mutate()
+      globalMutate("audit-logs")
+    } catch (error) {
+      console.error("Scan failed:", error)
+      toast.error("Failed to validate QR code")
     } finally {
       setScanning(false)
     }
   }
 
   async function handleCloseLocker(bookingId: string) {
+    if (!patientId) {
+      toast.error("Not authenticated")
+      return
+    }
+
     try {
-      const res = await closeLocker(bookingId)
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Locker closed. Medication collected successfully!")
-        setScanResult(null)
-        setScanToken("")
-        mutate()
+      const bookingRef = doc(db, "bookings", bookingId)
+      const bookingSnap = await getDoc(bookingRef)
+      if (!bookingSnap.exists()) {
+        toast.error("Booking not found")
+        return
       }
-    } catch {
+
+      const booking = {
+        id: bookingSnap.id,
+        ...(bookingSnap.data() as Omit<Booking, "id">),
+      } as Booking
+
+      await updateDoc(bookingRef, {
+        status: "collected",
+      })
+
+      if (booking.prescriptionId) {
+        await updateDoc(doc(db, "prescriptions", booking.prescriptionId), {
+          status: "collected",
+        })
+      }
+
+      const lockerQuery = query(
+        collection(db, "lockers"),
+        where("bookingId", "==", bookingId)
+      )
+      const lockerSnap = await getDocs(lockerQuery)
+
+      if (!lockerSnap.empty) {
+        const lockerDoc = lockerSnap.docs[0]
+        const locker = {
+          id: lockerDoc.id,
+          ...(lockerDoc.data() as Omit<Locker, "id">),
+        } as Locker
+
+        await updateDoc(doc(db, "lockers", locker.id), {
+          status: "available",
+          bookingId: null,
+        })
+
+        await addDoc(collection(db, "auditLogs"), {
+          userId: patientId,
+          userName: data?.patientName || "Patient",
+          action: "Locker Closed",
+          details: `Locker ${locker.label} released after collection for booking ${bookingId}`,
+          timestamp: new Date().toISOString(),
+        })
+      }
+
+      toast.success("Locker closed. Medication collected successfully!")
+      setScanResult(null)
+      setScanToken("")
+      mutate()
+      globalMutate("audit-logs")
+    } catch (error) {
+      console.error("Close locker failed:", error)
       toast.error("Failed to close locker")
     }
   }
@@ -170,6 +471,11 @@ export function PatientDashboard() {
   }
 
   async function handleSubmitBooking() {
+    if (!patientId) {
+      toast.error("Not authenticated")
+      return
+    }
+
     if (!bookingPrescription || !pickupDate || !pickupTime || !pharmacyName) {
       toast.error("Please fill in all fields")
       return
@@ -178,21 +484,90 @@ export function PatientDashboard() {
     setSubmittingBooking(true)
     try {
       const formattedPickup = `${pickupDate} ${pickupTime}`
-      const res = await patientBookPrescription(
-        bookingPrescription.id,
-        formattedPickup,
-        pharmacyName
-      )
 
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Pickup booked successfully!")
-        setShowBookingDialog(false)
-        setBookingPrescription(null)
-        mutate()
-      }
-    } catch {
+      const bookingRef = await addDoc(collection(db, "bookings"), {
+        prescriptionId: bookingPrescription.id,
+        patientEmail: auth.currentUser?.email || "",
+        pickupTime: formattedPickup,
+        pharmacyName,
+        createdById: patientId,
+        createdByRole: "patient",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      })
+
+      const expiresAt = new Date()
+      expiresAt.setMinutes(expiresAt.getMinutes() + 60)
+
+      const qrToken =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+
+      await addDoc(collection(db, "qrCodes"), {
+        bookingId: bookingRef.id,
+        token: qrToken,
+        expiresAt: expiresAt.toISOString(),
+        used: false,
+        createdAt: new Date().toISOString(),
+      })
+
+      await updateDoc(doc(db, "prescriptions", bookingPrescription.id), {
+        status: "booked",
+      })
+
+      const emailBody = `Hello ${data?.patientName || "Patient"},
+
+Your prescription pickup booking has been created successfully.
+
+Booking details:
+- Pickup time: ${formattedPickup}
+- Pharmacy: ${pharmacyName}
+- Booking status: Booked
+
+QR token to unlock locker:
+${qrToken}
+
+Instructions:
+Use this QR token when collecting your prescription to unlock the locker.
+
+This is a prototype email record stored in Firestore.
+`
+
+      await addDoc(collection(db, "emailLogs"), {
+        to: auth.currentUser?.email || "",
+        patientName: data?.patientName || "",
+        bookingId: bookingRef.id,
+        prescriptionId: bookingPrescription.id,
+        type: "booking_confirmation",
+        subject: "Prescription Pickup Booking Confirmed",
+        body: emailBody,
+        qrToken,
+        pickupTime: formattedPickup,
+        pharmacyName,
+        status: "queued",
+        deliveryMode: "prototype_firestore",
+        createdAt: new Date().toISOString(),
+        createdById: patientId,
+        createdByRole: "patient",
+      })
+
+      await addDoc(collection(db, "auditLogs"), {
+        userId: patientId,
+        userName: data?.patientName || "Patient",
+        action: "Patient Booking",
+        details: `Booked prescription ${bookingPrescription.id} at ${pharmacyName}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      toast.success("Pickup booked successfully!")
+      setShowBookingDialog(false)
+      setBookingPrescription(null)
+      mutate()
+      globalMutate("email-logs")
+      globalMutate("audit-logs")
+    } catch (error) {
+      console.error("Booking failed:", error)
       toast.error("Failed to book pickup")
     } finally {
       setSubmittingBooking(false)
@@ -200,6 +575,11 @@ export function PatientDashboard() {
   }
 
   async function handleSubmitRefill() {
+    if (!patientId) {
+      toast.error("Not authenticated")
+      return
+    }
+
     if (!selectedPrescription || !refillReason.trim()) {
       toast.error("Please provide a reason for the refill request")
       return
@@ -207,21 +587,47 @@ export function PatientDashboard() {
 
     setSubmittingRefill(true)
     try {
-      const res = await requestPrescriptionRefill(
-        selectedPrescription.id,
-        refillReason.trim()
+      const existingQuery = query(
+        collection(db, "refillRequests"),
+        where("patientId", "==", patientId),
+        where("prescriptionId", "==", selectedPrescription.id),
+        where("status", "==", "pending")
       )
+      const existingSnap = await getDocs(existingQuery)
 
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Refill request submitted successfully!")
-        setShowRefillDialog(false)
-        setSelectedPrescription(null)
-        setRefillReason("")
-        mutateRefills()
+      if (!existingSnap.empty) {
+        toast.error("A refill request is already pending for this prescription")
+        return
       }
-    } catch {
+
+      await addDoc(collection(db, "refillRequests"), {
+        prescriptionId: selectedPrescription.id,
+        patientId,
+        patientName: selectedPrescription.patientName,
+        patientEmail: auth.currentUser?.email || "",
+        doctorId: selectedPrescription.doctorId,
+        medications: selectedPrescription.medications,
+        reason: refillReason.trim(),
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      })
+
+      await addDoc(collection(db, "auditLogs"), {
+        userId: patientId,
+        userName: data?.patientName || "Patient",
+        action: "Refill Requested",
+        details: `Refill request for prescription ${selectedPrescription.id}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      toast.success("Refill request submitted successfully!")
+      setShowRefillDialog(false)
+      setSelectedPrescription(null)
+      setRefillReason("")
+      mutateRefills()
+      globalMutate("audit-logs")
+    } catch (error) {
+      console.error("Refill request failed:", error)
       toast.error("Failed to submit refill request")
     } finally {
       setSubmittingRefill(false)
@@ -229,15 +635,26 @@ export function PatientDashboard() {
   }
 
   function hasPendingRefill(prescriptionId: string): boolean {
-    return (
-      refillRequests.some(
-        (r) => r.prescriptionId === prescriptionId && r.status === "pending"
-      ) || false
+    return refillRequests.some(
+      (r) => r.prescriptionId === prescriptionId && r.status === "pending"
     )
   }
 
   function getRefillRequestStatus(prescriptionId: string): RefillRequest | undefined {
     return refillRequests.find((r) => r.prescriptionId === prescriptionId)
+  }
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-7xl space-y-6 p-6">
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <Loader2 className="mb-3 h-10 w-10 animate-spin text-muted-foreground" />
+            <p className="font-medium text-card-foreground">Loading patient dashboard...</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   return (
@@ -298,6 +715,12 @@ export function PatientDashboard() {
                         {scanResult.lockerLabel} is now open. Please collect your medication.
                       </p>
                     </div>
+                    {scanResult.bookingId && (
+                      <Button size="sm" onClick={() => handleCloseLocker(scanResult.bookingId!)}>
+                        <Lock className="mr-1.5 h-4 w-4" />
+                        Close Locker After Collection
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-2 text-center">
@@ -335,7 +758,7 @@ export function PatientDashboard() {
                 <Label htmlFor="refill-reason">Reason for Refill</Label>
                 <Textarea
                   id="refill-reason"
-                  placeholder="Please explain why you need a refill (e.g., medication running low, continuing treatment...)"
+                  placeholder="Please explain why you need a refill"
                   value={refillReason}
                   onChange={(e) => setRefillReason(e.target.value)}
                   rows={3}
