@@ -169,45 +169,45 @@ function usePatientData(
           })) as Booking[]
 
           const sortedBookings = allBookings.sort(
-            (a, b) =>
-              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          )
+  (a, b) =>
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+)
 
-          const activeBooking =
-            sortedBookings.find((b) =>
-              ["pending", "locker_assigned", "ready"].includes(b.status)
-            ) ?? null
+const latestBooking =
+  sortedBookings.find((b) =>
+    ["pending", "locker_assigned", "ready"].includes(b.status)
+  ) ?? null
 
-          const latestBooking = activeBooking ?? sortedBookings[0] ?? null
+let qr: QRCodeType | null = null
+let locker: Locker | null = null
 
-          let qr: QRCodeType | null = null
-          let locker: Locker | null = null
+if (latestBooking) {
+  const qrQuery = query(
+    collection(db, "qrCodes"),
+    where("bookingId", "==", latestBooking.id)
+  )
+  const qrSnap = await getDocs(qrQuery)
 
-          if (latestBooking) {
-            const qrQuery = query(
-              collection(db, "qrCodes"),
-              where("bookingId", "==", latestBooking.id)
-            )
-            const qrSnap = await getDocs(qrQuery)
-            if (!qrSnap.empty) {
-              qr = {
-                id: qrSnap.docs[0].id,
-                ...(qrSnap.docs[0].data() as Omit<QRCodeType, "id">),
-              } as QRCodeType
-            }
+  if (!qrSnap.empty) {
+    qr = {
+      id: qrSnap.docs[0].id,
+      ...(qrSnap.docs[0].data() as Omit<QRCodeType, "id">),
+    } as QRCodeType
+  }
 
-            const lockerQuery = query(
-              collection(db, "lockers"),
-              where("bookingId", "==", latestBooking.id)
-            )
-            const lockerSnap = await getDocs(lockerQuery)
-            if (!lockerSnap.empty) {
-              locker = {
-                id: lockerSnap.docs[0].id,
-                ...(lockerSnap.docs[0].data() as Omit<Locker, "id">),
-              } as Locker
-            }
-          }
+  const lockerQuery = query(
+    collection(db, "lockers"),
+    where("bookingId", "==", latestBooking.id)
+  )
+  const lockerSnap = await getDocs(lockerQuery)
+
+  if (!lockerSnap.empty) {
+    locker = {
+      id: lockerSnap.docs[0].id,
+      ...(lockerSnap.docs[0].data() as Omit<Locker, "id">),
+    } as Locker
+  }
+}
 
           return {
             prescription,
@@ -311,10 +311,53 @@ export function PatientDashboard() {
       } as QRCodeType
 
       if (qr.used) {
-        setScanResult({ error: "This QR code has already been used" })
-        toast.error("This QR code has already been used")
-        return
-      }
+  setScanResult({ error: "This QR code has already been used" })
+  toast.error("This QR code has already been used")
+  return
+}
+
+if (new Date(qr.expiresAt) < new Date()) {
+  const bookingRef = doc(db, "bookings", qr.bookingId)
+  const bookingSnap = await getDoc(bookingRef)
+
+  if (bookingSnap.exists()) {
+    const booking = {
+      id: bookingSnap.id,
+      ...(bookingSnap.data() as Omit<Booking, "id">),
+    } as Booking
+
+    // Mark the booking as expired
+    await updateDoc(bookingRef, { status: "expired" })
+
+    // Mark the associated prescription as expired
+    if (booking.prescriptionId) {
+      await updateDoc(doc(db, "prescriptions", booking.prescriptionId), {
+        status: "expired",
+      })
+    }
+
+    // Log email that the QR code is expired
+    await addDoc(collection(db, "emailLogs"), {
+      to: booking.patientEmail,
+      bookingId: booking.id,
+      prescriptionId: booking.prescriptionId,
+      type: "expired",
+      subject: "QR Code Expired - Rebooking Required",
+      body: `Your QR code has expired. Please rebook your prescription pickup.`,
+      status: "queued",
+      deliveryMode: "prototype_firestore",
+      createdAt: new Date().toISOString(),
+      createdById: patientId,
+      createdByRole: "patient",
+    })
+  }
+
+  setScanResult({ error: "QR code has expired. Please rebook." })
+  toast.error("QR code has expired. Please rebook.")
+  mutate()
+  globalMutate("email-logs")
+  return
+}
 
       if (new Date(qr.expiresAt) < new Date()) {
         const bookingRef = doc(db, "bookings", qr.bookingId)
@@ -366,14 +409,20 @@ export function PatientDashboard() {
       }
 
       const booking = {
-        id: bookingSnap.id,
-        ...(bookingSnap.data() as Omit<Booking, "id">),
-      } as Booking
+  id: bookingSnap.id,
+  ...(bookingSnap.data() as Omit<Booking, "id">),
+} as Booking
 
-      const lockerQuery = query(
-        collection(db, "lockers"),
-        where("bookingId", "==", booking.id)
-      )
+if (!["locker_assigned", "ready"].includes(booking.status)) {
+  setScanResult({ error: "This booking is not ready for collection yet" })
+  toast.error("This booking is not ready for collection yet")
+  return
+}
+
+const lockerQuery = query(
+  collection(db, "lockers"),
+  where("bookingId", "==", booking.id)
+)
       const lockerSnap = await getDocs(lockerQuery)
 
       let lockerLabel = "Unknown"
