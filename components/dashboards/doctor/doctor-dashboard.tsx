@@ -2,7 +2,15 @@
 
 import React, { useState, useCallback } from "react"
 import { toast } from "sonner"
-import { collection, query, where, getDocs, addDoc } from "firebase/firestore"
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  addDoc,
+  doc,
+  updateDoc,
+} from "firebase/firestore"
 import { db } from "@/src/config/firebase"
 import {
   Stethoscope,
@@ -33,11 +41,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { RiskDisplay } from "@/components/risk/risk-display"
-import {
-  runRiskAssessment,
-  approveRefillRequest,
-  rejectRefillRequest,
-} from "@/lib/actions"
+import { runRiskAssessment } from "@/lib/actions"
 import type {
   Prescription,
   MedicationItem,
@@ -79,15 +83,15 @@ function usePatientsData() {
     const q = query(collection(db, "users"), where("role", "==", "patient"))
     const querySnapshot = await getDocs(q)
 
-    return querySnapshot.docs.map((doc) => {
-      const data = doc.data() as {
+    return querySnapshot.docs.map((docSnap) => {
+      const data = docSnap.data() as {
         name?: string
         email?: string
         allergies?: unknown
       }
 
       return {
-        id: doc.id,
+        id: docSnap.id,
         name: data.name ?? "",
         email: data.email ?? "",
         allergies: Array.isArray(data.allergies)
@@ -102,33 +106,17 @@ function usePrescriptionsData(doctorId: string) {
   return useSWR<Prescription[]>(
     doctorId ? ["doctor-prescriptions", doctorId] : null,
     async () => {
-      try {
-        console.log("doctorId used for query:", doctorId)
+      const q = query(
+        collection(db, "prescriptions"),
+        where("doctorId", "==", doctorId)
+      )
 
-        const q = query(
-          collection(db, "prescriptions"),
-          where("doctorId", "==", doctorId)
-        )
+      const snapshot = await getDocs(q)
 
-        const snapshot = await getDocs(q)
-
-        console.log("prescriptions found:", snapshot.size)
-        console.log(
-          "prescription docs:",
-          snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-          }))
-        )
-
-        return snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...(doc.data() as Omit<Prescription, "id">),
-        }))
-      } catch (error) {
-        console.error("Failed to load prescriptions:", error)
-        throw error
-      }
+      return snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<Prescription, "id">),
+      }))
     }
   )
 }
@@ -145,9 +133,9 @@ function useRefillRequestsData(doctorId: string) {
 
       const snapshot = await getDocs(q)
 
-      return snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...(doc.data() as Omit<RefillRequest, "id">),
+      return snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<RefillRequest, "id">),
       }))
     }
   )
@@ -155,11 +143,7 @@ function useRefillRequestsData(doctorId: string) {
 
 export function DoctorDashboard({ doctor }: { doctor: DoctorContext }) {
   const { data: patients = [] } = usePatientsData()
-const {
-  data: prescriptions = [],
-  mutate: mutatePrescriptions,
-  error: prescriptionsError,
-} = usePrescriptionsData(doctor.id)
+  const { data: prescriptions = [], mutate: mutatePrescriptions } = usePrescriptionsData(doctor.id)
   const { data: refillRequests = [], mutate: mutateRefillRequests } = useRefillRequestsData(doctor.id)
   const { mutate: globalMutate } = useSWRConfig()
 
@@ -302,19 +286,69 @@ const {
     }
   }
 
-  async function handleApproveRefill(requestId: string) {
-    setProcessingRefill(requestId)
+  async function handleApproveRefill(request: RefillRequest) {
+    setProcessingRefill(request.id)
+
     try {
-      const res = await approveRefillRequest(doctor.id, doctor.name, requestId)
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Refill request approved! New prescription created.")
-        mutateRefillRequests()
-        mutatePrescriptions()
-        globalMutate("audit-logs")
-        globalMutate("email-logs")
-      }
+      await addDoc(collection(db, "prescriptions"), {
+        doctorId: doctor.id,
+        patientId: request.patientId,
+        patientName: request.patientName,
+        clinicId: "",
+        medications: request.medications,
+        notes: `Refill of previous prescription. Reason: ${request.reason}`,
+        riskAssessment: null,
+        status: "confirmed",
+        createdAt: new Date().toISOString(),
+      })
+
+      await updateDoc(doc(db, "refillRequests", request.id), {
+        status: "approved",
+        rejectionReason: null,
+        respondedAt: new Date().toISOString(),
+      })
+
+      const medSummary = request.medications.map((m) => m.name).join(", ")
+
+      await addDoc(collection(db, "auditLogs"), {
+        userId: doctor.id,
+        userName: doctor.name,
+        action: "Refill Approved",
+        details: `Approved refill request ${request.id} for ${request.patientName}: ${medSummary}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      await addDoc(collection(db, "emailLogs"), {
+        to: request.patientEmail,
+        patientName: request.patientName,
+        prescriptionId: request.prescriptionId,
+        type: "refill_approved",
+        subject: "Your Prescription Refill Has Been Approved",
+        body: `Hello ${request.patientName},
+
+Your prescription refill has been approved.
+
+Medications:
+${request.medications.map((m) => `- ${m.name} (${m.dosage})`).join("\n")}
+
+Status: Approved
+
+This is a prototype email record stored in Firestore.`,
+        status: "queued",
+        deliveryMode: "prototype_firestore",
+        createdAt: new Date().toISOString(),
+        createdById: doctor.id,
+        createdByRole: "doctor",
+      })
+
+      toast.success("Refill request approved! New prescription created.")
+      mutateRefillRequests()
+      mutatePrescriptions()
+      globalMutate("audit-logs")
+      globalMutate("email-logs")
+    } catch (error) {
+      console.error("Approve refill failed:", error)
+      toast.error("Failed to approve refill request")
     } finally {
       setProcessingRefill(null)
     }
@@ -333,24 +367,58 @@ const {
     }
 
     setProcessingRefill(selectedRefillRequest.id)
+
     try {
-      const res = await rejectRefillRequest(
-        doctor.id,
-        doctor.name,
-        selectedRefillRequest.id,
-        rejectionReason.trim()
-      )
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Refill request declined")
-        setShowRejectDialog(false)
-        setSelectedRefillRequest(null)
-        setRejectionReason("")
-        mutateRefillRequests()
-        globalMutate("audit-logs")
-        globalMutate("email-logs")
-      }
+      await updateDoc(doc(db, "refillRequests", selectedRefillRequest.id), {
+        status: "rejected",
+        rejectionReason: rejectionReason.trim(),
+        respondedAt: new Date().toISOString(),
+      })
+
+      const medSummary = selectedRefillRequest.medications.map((m) => m.name).join(", ")
+
+      await addDoc(collection(db, "auditLogs"), {
+        userId: doctor.id,
+        userName: doctor.name,
+        action: "Refill Rejected",
+        details: `Rejected refill request ${selectedRefillRequest.id} for ${selectedRefillRequest.patientName}: ${medSummary}. Reason: ${rejectionReason.trim()}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      await addDoc(collection(db, "emailLogs"), {
+        to: selectedRefillRequest.patientEmail,
+        patientName: selectedRefillRequest.patientName,
+        prescriptionId: selectedRefillRequest.prescriptionId,
+        type: "refill_rejected",
+        subject: "Your Prescription Refill Request Was Declined",
+        body: `Hello ${selectedRefillRequest.patientName},
+
+Your prescription refill request was declined.
+
+Medications:
+${selectedRefillRequest.medications.map((m) => `- ${m.name} (${m.dosage})`).join("\n")}
+
+Reason:
+${rejectionReason.trim()}
+
+This is a prototype email record stored in Firestore.`,
+        status: "queued",
+        deliveryMode: "prototype_firestore",
+        createdAt: new Date().toISOString(),
+        createdById: doctor.id,
+        createdByRole: "doctor",
+      })
+
+      toast.success("Refill request declined")
+      setShowRejectDialog(false)
+      setSelectedRefillRequest(null)
+      setRejectionReason("")
+      mutateRefillRequests()
+      globalMutate("audit-logs")
+      globalMutate("email-logs")
+    } catch (error) {
+      console.error("Reject refill failed:", error)
+      toast.error("Failed to decline refill request")
     } finally {
       setProcessingRefill(null)
     }
@@ -545,7 +613,7 @@ const {
             </Card>
           ) : (
             <div className="space-y-4">
-              {refillRequests.map((request: RefillRequest) => (
+              {refillRequests.map((request) => (
                 <Card key={request.id}>
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
@@ -585,7 +653,7 @@ const {
                     <div className="flex gap-2 pt-2">
                       <Button
                         className="flex-1"
-                        onClick={() => handleApproveRefill(request.id)}
+                        onClick={() => handleApproveRefill(request)}
                         disabled={processingRefill === request.id}
                       >
                         {processingRefill === request.id ? (
