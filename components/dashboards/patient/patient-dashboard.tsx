@@ -73,11 +73,13 @@ interface PatientItem {
 type PatientDashboardData = {
   items: PatientItem[]
   patientName: string
+  patientEmail: string
 }
 
 function useCurrentPatient() {
   const [patientId, setPatientId] = useState<string | null>(null)
   const [patientName, setPatientName] = useState("")
+  const [patientEmail, setPatientEmail] = useState("")
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -85,6 +87,7 @@ function useCurrentPatient() {
       if (!firebaseUser) {
         setPatientId(null)
         setPatientName("")
+        setPatientEmail("")
         setLoading(false)
         return
       }
@@ -94,24 +97,33 @@ function useCurrentPatient() {
         if (!userSnap.exists()) {
           setPatientId(null)
           setPatientName("")
+          setPatientEmail("")
           setLoading(false)
           return
         }
 
-        const user = userSnap.data() as { role?: string; name?: string }
+        const user = userSnap.data() as {
+          role?: string
+          name?: string
+          email?: string
+        }
+
         if (user.role !== "patient") {
           setPatientId(null)
           setPatientName("")
+          setPatientEmail("")
           setLoading(false)
           return
         }
 
         setPatientId(firebaseUser.uid)
         setPatientName(user.name || "")
+        setPatientEmail(user.email || firebaseUser.email || "")
       } catch (error) {
         console.error("Failed to load patient session:", error)
         setPatientId(null)
         setPatientName("")
+        setPatientEmail("")
       } finally {
         setLoading(false)
       }
@@ -120,10 +132,14 @@ function useCurrentPatient() {
     return () => unsubscribe()
   }, [])
 
-  return { patientId, patientName, loading }
+  return { patientId, patientName, patientEmail, loading }
 }
 
-function usePatientData(patientId: string | null, patientName: string) {
+function usePatientData(
+  patientId: string | null,
+  patientName: string,
+  patientEmail: string
+) {
   return useSWR<PatientDashboardData>(
     patientId ? ["patient-dashboard", patientId] : null,
     async () => {
@@ -147,20 +163,30 @@ function usePatientData(patientId: string | null, patientName: string) {
           )
           const bookingSnap = await getDocs(bookingQuery)
 
-          const booking = bookingSnap.empty
-            ? null
-            : ({
-                id: bookingSnap.docs[0].id,
-                ...(bookingSnap.docs[0].data() as Omit<Booking, "id">),
-              } as Booking)
+          const allBookings = bookingSnap.docs.map((docSnap) => ({
+            id: docSnap.id,
+            ...(docSnap.data() as Omit<Booking, "id">),
+          })) as Booking[]
+
+          const sortedBookings = allBookings.sort(
+            (a, b) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          )
+
+          const activeBooking =
+            sortedBookings.find((b) =>
+              ["pending", "locker_assigned", "ready"].includes(b.status)
+            ) ?? null
+
+          const latestBooking = activeBooking ?? sortedBookings[0] ?? null
 
           let qr: QRCodeType | null = null
           let locker: Locker | null = null
 
-          if (booking) {
+          if (latestBooking) {
             const qrQuery = query(
               collection(db, "qrCodes"),
-              where("bookingId", "==", booking.id)
+              where("bookingId", "==", latestBooking.id)
             )
             const qrSnap = await getDocs(qrQuery)
             if (!qrSnap.empty) {
@@ -172,7 +198,7 @@ function usePatientData(patientId: string | null, patientName: string) {
 
             const lockerQuery = query(
               collection(db, "lockers"),
-              where("bookingId", "==", booking.id)
+              where("bookingId", "==", latestBooking.id)
             )
             const lockerSnap = await getDocs(lockerQuery)
             if (!lockerSnap.empty) {
@@ -185,7 +211,7 @@ function usePatientData(patientId: string | null, patientName: string) {
 
           return {
             prescription,
-            booking,
+            booking: latestBooking,
             qr,
             locker,
           }
@@ -199,6 +225,7 @@ function usePatientData(patientId: string | null, patientName: string) {
             new Date(a.prescription.createdAt).getTime()
         ),
         patientName,
+        patientEmail,
       }
     }
   )
@@ -214,19 +241,18 @@ function useRefillRequests(patientId: string | null) {
       )
       const snap = await getDocs(q)
 
-      return snap.docs
-        .map((docSnap) => ({
-          id: docSnap.id,
-          ...(docSnap.data() as Omit<RefillRequest, "id">),
-        })) as RefillRequest[]
+      return snap.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<RefillRequest, "id">),
+      })) as RefillRequest[]
     }
   )
 }
 
 export function PatientDashboard() {
   const { mutate: globalMutate } = useSWRConfig()
-  const { patientId, patientName, loading } = useCurrentPatient()
-  const { data, mutate } = usePatientData(patientId, patientName)
+  const { patientId, patientName, patientEmail, loading } = useCurrentPatient()
+  const { data, mutate } = usePatientData(patientId, patientName, patientEmail)
   const { data: refillRequests = [], mutate: mutateRefills } = useRefillRequests(patientId)
 
   const items = data?.items || []
@@ -481,13 +507,40 @@ export function PatientDashboard() {
       return
     }
 
+    const emailToUse = data?.patientEmail || patientEmail
+
+    if (!emailToUse) {
+      toast.error("Patient email is missing")
+      return
+    }
+
     setSubmittingBooking(true)
     try {
       const formattedPickup = `${pickupDate} ${pickupTime}`
 
+      const existingBookingQuery = query(
+        collection(db, "bookings"),
+        where("prescriptionId", "==", bookingPrescription.id)
+      )
+      const existingBookingSnap = await getDocs(existingBookingQuery)
+
+      const existingBookings = existingBookingSnap.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<Booking, "id">),
+      })) as Booking[]
+
+      const hasActiveBooking = existingBookings.some((b) =>
+        ["pending", "locker_assigned", "ready"].includes(b.status)
+      )
+
+      if (hasActiveBooking) {
+        toast.error("This prescription already has an active booking")
+        return
+      }
+
       const bookingRef = await addDoc(collection(db, "bookings"), {
         prescriptionId: bookingPrescription.id,
-        patientEmail: auth.currentUser?.email || "",
+        patientEmail: emailToUse,
         pickupTime: formattedPickup,
         pharmacyName,
         createdById: patientId,
@@ -535,7 +588,7 @@ This is a prototype email record stored in Firestore.
 `
 
       await addDoc(collection(db, "emailLogs"), {
-        to: auth.currentUser?.email || "",
+        to: emailToUse,
         patientName: data?.patientName || "",
         bookingId: bookingRef.id,
         prescriptionId: bookingPrescription.id,
@@ -563,6 +616,9 @@ This is a prototype email record stored in Firestore.
       toast.success("Pickup booked successfully!")
       setShowBookingDialog(false)
       setBookingPrescription(null)
+      setPickupDate("")
+      setPickupTime("")
+      setPharmacyName("")
       mutate()
       globalMutate("email-logs")
       globalMutate("audit-logs")
@@ -604,7 +660,7 @@ This is a prototype email record stored in Firestore.
         prescriptionId: selectedPrescription.id,
         patientId,
         patientName: selectedPrescription.patientName,
-        patientEmail: auth.currentUser?.email || "",
+        patientEmail: data?.patientEmail || patientEmail,
         doctorId: selectedPrescription.doctorId,
         medications: selectedPrescription.medications,
         reason: refillReason.trim(),
@@ -716,7 +772,7 @@ This is a prototype email record stored in Firestore.
                       </p>
                     </div>
                     {scanResult.bookingId && (
-                      <Button size="sm" onClick={() => handleCloseLocker(scanResult.bookingId!)}>
+                      <Button size="sm" onClick={() => handleCloseLocker(scanResult.bookingId!)} className="mt-2">
                         <Lock className="mr-1.5 h-4 w-4" />
                         Close Locker After Collection
                       </Button>
@@ -806,6 +862,11 @@ This is a prototype email record stored in Firestore.
                     </li>
                   ))}
                 </ul>
+              </div>
+
+              <div className="rounded-lg bg-muted p-3 text-sm">
+                <p className="text-xs text-muted-foreground">Email</p>
+                <p className="font-medium text-foreground">{data?.patientEmail || patientEmail || "No email found"}</p>
               </div>
 
               <div className="space-y-2">
@@ -964,12 +1025,30 @@ function PatientPrescriptionCard({
 }) {
   const { prescription: rx, booking, locker } = item
   const canRequestRefill = rx.status === "collected" && !hasPendingRefill
+  const canBookPickup =
+    rx.status === "confirmed" &&
+    (!booking || ["expired", "collected"].includes(booking.status))
 
   const statusSteps = [
     { key: "confirmed", label: "Prescribed", icon: CheckCircle2, done: true },
-    { key: "booked", label: "Booked", icon: Clock, done: ["booked", "ready", "collected"].includes(rx.status) },
-    { key: "ready", label: "Ready", icon: Package, done: ["ready", "collected"].includes(rx.status) },
-    { key: "collected", label: "Collected", icon: CheckCircle2, done: rx.status === "collected" },
+    {
+      key: "booked",
+      label: "Booked",
+      icon: Clock,
+      done: ["booked", "ready", "collected"].includes(rx.status),
+    },
+    {
+      key: "ready",
+      label: "Ready",
+      icon: Package,
+      done: ["ready", "collected"].includes(rx.status),
+    },
+    {
+      key: "collected",
+      label: "Collected",
+      icon: CheckCircle2,
+      done: rx.status === "collected",
+    },
   ]
 
   return (
@@ -994,12 +1073,20 @@ function PatientPrescriptionCard({
             const Icon = step.icon
             return (
               <div key={step.key} className="flex items-center gap-1">
-                <div className={`flex items-center gap-1.5 ${step.done ? "text-primary" : "text-muted-foreground"}`}>
+                <div
+                  className={`flex items-center gap-1.5 ${
+                    step.done ? "text-primary" : "text-muted-foreground"
+                  }`}
+                >
                   <Icon className="h-4 w-4" />
                   <span className="text-xs font-medium">{step.label}</span>
                 </div>
                 {i < statusSteps.length - 1 && (
-                  <div className={`ml-2 h-px w-8 ${step.done ? "bg-primary" : "bg-border"}`} />
+                  <div
+                    className={`ml-2 h-px w-8 ${
+                      step.done ? "bg-primary" : "bg-border"
+                    }`}
+                  />
                 )}
               </div>
             )
@@ -1027,8 +1114,12 @@ function PatientPrescriptionCard({
               <div className="flex items-center gap-3">
                 <Unlock className="h-6 w-6 text-[hsl(152,60%,40%)]" />
                 <div>
-                  <p className="font-medium text-[hsl(152,60%,25%)]">Locker {locker.label} is Open</p>
-                  <p className="text-sm text-[hsl(152,60%,30%)]">Please collect your medication</p>
+                  <p className="font-medium text-[hsl(152,60%,25%)]">
+                    Locker {locker.label} is Open
+                  </p>
+                  <p className="text-sm text-[hsl(152,60%,30%)]">
+                    Please collect your medication
+                  </p>
                 </div>
               </div>
               <Button size="sm" onClick={() => onCloseLocker(booking.id)}>
@@ -1039,15 +1130,23 @@ function PatientPrescriptionCard({
           </div>
         )}
 
-        {rx.status === "confirmed" && !booking && (
-          <Button variant="outline" className="w-full" onClick={() => onBookPrescription(rx)}>
+        {canBookPickup && (
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => onBookPrescription(rx)}
+          >
             <CalendarClock className="mr-1.5 h-4 w-4" />
             Book Pickup
           </Button>
         )}
 
         {canRequestRefill && (
-          <Button variant="outline" className="w-full" onClick={() => onRequestRefill(rx)}>
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => onRequestRefill(rx)}
+          >
             <RefreshCw className="mr-1.5 h-4 w-4" />
             Request Refill
           </Button>
@@ -1069,7 +1168,9 @@ function PatientPrescriptionCard({
             <div className="flex items-center gap-2">
               <XCircle className="h-4 w-4 text-destructive" />
               <div>
-                <p className="text-sm font-medium text-destructive">Refill request declined</p>
+                <p className="text-sm font-medium text-destructive">
+                  Refill request declined
+                </p>
                 {refillRequest.rejectionReason && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     Reason: {refillRequest.rejectionReason}
