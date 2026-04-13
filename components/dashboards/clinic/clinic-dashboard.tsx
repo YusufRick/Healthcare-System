@@ -67,6 +67,16 @@ const TIME_SLOTS = [
   "16:00 - 17:00",
 ]
 
+function parseSlotStart(date: string, slot: string) {
+  const [slotStart] = slot.split(" - ")
+  return new Date(`${date}T${slotStart}:00`)
+}
+
+function parseSlotEnd(date: string, slot: string) {
+  const [, slotEnd] = slot.split(" - ")
+  return new Date(`${date}T${slotEnd}:00`)
+}
+
 function useClinicPrescriptions() {
   return useSWR<Prescription[]>("clinic-prescriptions", async () => {
     const q = query(
@@ -241,52 +251,59 @@ function PrescriptionBookingCard({
   const [pharmacyName, setPharmacyName] = useState("")
   const [loading, setLoading] = useState(false)
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+async function handleSubmit(e: React.FormEvent) {
+  e.preventDefault()
 
-    if (!patientEmail || !pickupDate || !pickupTime || !pharmacyName) {
-      toast.error("Please fill in all fields")
-      return
-    }
+  if (!patientEmail || !pickupDate || !pickupTime || !pharmacyName) {
+    toast.error("Please fill in all fields")
+    return
+  }
 
-    setLoading(true)
+  const slotStart = parseSlotStart(pickupDate, pickupTime)
 
-    try {
-      const formattedPickup = `${pickupDate} ${pickupTime}`
+  if (slotStart.getTime() <= Date.now()) {
+    toast.error("Please choose a pickup time slot that has not passed")
+    return
+  }
 
-      const bookingRef = await addDoc(collection(db, "bookings"), {
-        prescriptionId: prescription.id,
-        patientEmail,
-        pickupTime: formattedPickup,
-        pharmacyName,
-        createdById: clinic.id,
-        createdByRole: "clinic_staff",
-        status: "pending",
-        createdAt: new Date().toISOString(),
-      })
+  setLoading(true)
 
-      const expiresAt = new Date()
-      expiresAt.setMinutes(expiresAt.getMinutes() + 60)
+  try {
+    const formattedPickup = `${pickupDate} ${pickupTime}`
 
-      const qrToken =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    const bookingRef = await addDoc(collection(db, "bookings"), {
+      prescriptionId: prescription.id,
+      patientEmail,
+      pickupTime: formattedPickup,
+      pharmacyName,
+      createdById: clinic.id,
+      createdByRole: "clinic_staff",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    })
 
-      await addDoc(collection(db, "qrCodes"), {
-        bookingId: bookingRef.id,
-        token: qrToken,
-        expiresAt: expiresAt.toISOString(),
-        used: false,
-        createdAt: new Date().toISOString(),
-      })
+    const expiresAt = parseSlotEnd(pickupDate, pickupTime)
+    expiresAt.setMinutes(expiresAt.getMinutes() + 30)
 
-      await updateDoc(doc(db, "prescriptions", prescription.id), {
-        status: "booked",
-      })
+    const qrToken =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
-      const emailSubject = "Prescription Pickup Booking Confirmation"
-      const emailBody = `Hello ${prescription.patientName},
+    await addDoc(collection(db, "qrCodes"), {
+      bookingId: bookingRef.id,
+      token: qrToken,
+      expiresAt: expiresAt.toISOString(),
+      used: false,
+      createdAt: new Date().toISOString(),
+    })
+
+    await updateDoc(doc(db, "prescriptions", prescription.id), {
+      status: "booked",
+    })
+
+    const emailSubject = "Prescription Pickup Booking Confirmation"
+    const emailBody = `Hello ${prescription.patientName},
 
 Your prescription pickup booking has been created successfully.
 
@@ -299,56 +316,57 @@ Booking details:
 QR token to unlock locker:
 ${qrToken}
 
+QR expiry:
+${expiresAt.toLocaleString()}
+
 Instructions:
 Use this QR token when collecting your prescription to unlock the locker.
-
-This is a prototype email record stored in Firestore.
 `
 
-      await addDoc(collection(db, "emailLogs"), {
-        to: patientEmail,
-        patientName: prescription.patientName,
-        bookingId: bookingRef.id,
-        prescriptionId: prescription.id,
-        type: "booking_confirmation",
-        subject: emailSubject,
-        body: emailBody,
-        qrToken,
-        pickupTime: formattedPickup,
-        pharmacyName,
-        status: "queued",
-        deliveryMode: "prototype_firestore",
-        createdAt: new Date().toISOString(),
-        createdById: clinic.id,
-        createdByRole: "clinic_staff",
-      })
+    await addDoc(collection(db, "emailLogs"), {
+      to: patientEmail,
+      patientName: prescription.patientName,
+      bookingId: bookingRef.id,
+      prescriptionId: prescription.id,
+      type: "booking_confirmation",
+      subject: emailSubject,
+      body: emailBody,
+      qrToken,
+      pickupTime: formattedPickup,
+      pharmacyName,
+      status: "queued",
+      deliveryMode: "prototype_firestore",
+      createdAt: new Date().toISOString(),
+      createdById: clinic.id,
+      createdByRole: "clinic_staff",
+    })
 
-      await addDoc(collection(db, "auditLogs"), {
-        userId: clinic.id,
-        userName: clinic.name,
-        action: "Booking Created",
-        details: `Booking ${bookingRef.id} for prescription ${prescription.id} at ${pharmacyName}. QR token generated.`,
-        timestamp: new Date().toISOString(),
-      })
+    await addDoc(collection(db, "auditLogs"), {
+      userId: clinic.id,
+      userName: clinic.name,
+      action: "Booking Created",
+      details: `Booking ${bookingRef.id} for prescription ${prescription.id} at ${pharmacyName}. QR token generated.`,
+      timestamp: new Date().toISOString(),
+    })
 
-      toast.success("Booking created successfully")
-      setOpen(false)
-      setPatientEmail("")
-      setPickupDate("")
-      setPickupTime("")
-      setPharmacyName("")
-      onBooked()
-      globalMutate("clinic-prescriptions")
-      globalMutate("clinic-booking-history")
-      globalMutate("audit-logs")
-      globalMutate("email-logs")
-    } catch (error) {
-      console.error("Create booking failed:", error)
-      toast.error("Failed to create booking")
-    } finally {
-      setLoading(false)
-    }
+    toast.success("Booking created successfully")
+    setOpen(false)
+    setPatientEmail("")
+    setPickupDate("")
+    setPickupTime("")
+    setPharmacyName("")
+    onBooked()
+    globalMutate("clinic-prescriptions")
+    globalMutate("clinic-booking-history")
+    globalMutate("audit-logs")
+    globalMutate("email-logs")
+  } catch (error) {
+    console.error("Create booking failed:", error)
+    toast.error("Failed to create booking")
+  } finally {
+    setLoading(false)
   }
+}
 
   const medSummary = prescription.medications.map((m) => m.name).join(", ")
 

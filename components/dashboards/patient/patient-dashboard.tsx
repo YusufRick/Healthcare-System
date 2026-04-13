@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { onAuthStateChanged } from "firebase/auth"
 import {
@@ -36,7 +36,14 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type {
   Prescription,
@@ -74,6 +81,16 @@ type PatientDashboardData = {
   items: PatientItem[]
   patientName: string
   patientEmail: string
+}
+
+function parseSlotStart(date: string, slot: string) {
+  const [slotStart] = slot.split(" - ")
+  return new Date(`${date}T${slotStart}:00`)
+}
+
+function parseSlotEnd(date: string, slot: string) {
+  const [, slotEnd] = slot.split(" - ")
+  return new Date(`${date}T${slotEnd}:00`)
 }
 
 function useCurrentPatient() {
@@ -169,45 +186,47 @@ function usePatientData(
           })) as Booking[]
 
           const sortedBookings = allBookings.sort(
-  (a, b) =>
-    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-)
+            (a, b) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          )
 
-const latestBooking =
-  sortedBookings.find((b) =>
-    ["pending", "locker_assigned", "ready"].includes(b.status)
-  ) ?? null
+          const latestBooking = sortedBookings[0] ?? null
 
-let qr: QRCodeType | null = null
-let locker: Locker | null = null
+          const activeBooking =
+            sortedBookings.find((b) =>
+              ["pending", "locker_assigned", "ready"].includes(b.status)
+            ) ?? null
 
-if (latestBooking) {
-  const qrQuery = query(
-    collection(db, "qrCodes"),
-    where("bookingId", "==", latestBooking.id)
-  )
-  const qrSnap = await getDocs(qrQuery)
+          let qr: QRCodeType | null = null
+          let locker: Locker | null = null
 
-  if (!qrSnap.empty) {
-    qr = {
-      id: qrSnap.docs[0].id,
-      ...(qrSnap.docs[0].data() as Omit<QRCodeType, "id">),
-    } as QRCodeType
-  }
+          if (activeBooking) {
+            const qrQuery = query(
+              collection(db, "qrCodes"),
+              where("bookingId", "==", activeBooking.id)
+            )
+            const qrSnap = await getDocs(qrQuery)
 
-  const lockerQuery = query(
-    collection(db, "lockers"),
-    where("bookingId", "==", latestBooking.id)
-  )
-  const lockerSnap = await getDocs(lockerQuery)
+            if (!qrSnap.empty) {
+              qr = {
+                id: qrSnap.docs[0].id,
+                ...(qrSnap.docs[0].data() as Omit<QRCodeType, "id">),
+              } as QRCodeType
+            }
 
-  if (!lockerSnap.empty) {
-    locker = {
-      id: lockerSnap.docs[0].id,
-      ...(lockerSnap.docs[0].data() as Omit<Locker, "id">),
-    } as Locker
-  }
-}
+            const lockerQuery = query(
+              collection(db, "lockers"),
+              where("bookingId", "==", activeBooking.id)
+            )
+            const lockerSnap = await getDocs(lockerQuery)
+
+            if (!lockerSnap.empty) {
+              locker = {
+                id: lockerSnap.docs[0].id,
+                ...(lockerSnap.docs[0].data() as Omit<Locker, "id">),
+              } as Locker
+            }
+          }
 
           return {
             prescription,
@@ -279,6 +298,16 @@ export function PatientDashboard() {
   const [pharmacyName, setPharmacyName] = useState("")
   const [submittingBooking, setSubmittingBooking] = useState(false)
 
+  const [showQrDialog, setShowQrDialog] = useState(false)
+  const [selectedQrItem, setSelectedQrItem] = useState<PatientItem | null>(null)
+
+  const todayString = useMemo(() => new Date().toISOString().split("T")[0], [])
+
+  function openQrDialog(item: PatientItem) {
+    setSelectedQrItem(item)
+    setShowQrDialog(true)
+  }
+
   async function handleScan() {
     if (!scanToken.trim()) {
       toast.error("Please enter a QR code token")
@@ -311,53 +340,10 @@ export function PatientDashboard() {
       } as QRCodeType
 
       if (qr.used) {
-  setScanResult({ error: "This QR code has already been used" })
-  toast.error("This QR code has already been used")
-  return
-}
-
-if (new Date(qr.expiresAt) < new Date()) {
-  const bookingRef = doc(db, "bookings", qr.bookingId)
-  const bookingSnap = await getDoc(bookingRef)
-
-  if (bookingSnap.exists()) {
-    const booking = {
-      id: bookingSnap.id,
-      ...(bookingSnap.data() as Omit<Booking, "id">),
-    } as Booking
-
-    // Mark the booking as expired
-    await updateDoc(bookingRef, { status: "expired" })
-
-    // Mark the associated prescription as expired
-    if (booking.prescriptionId) {
-      await updateDoc(doc(db, "prescriptions", booking.prescriptionId), {
-        status: "expired",
-      })
-    }
-
-    // Log email that the QR code is expired
-    await addDoc(collection(db, "emailLogs"), {
-      to: booking.patientEmail,
-      bookingId: booking.id,
-      prescriptionId: booking.prescriptionId,
-      type: "expired",
-      subject: "QR Code Expired - Rebooking Required",
-      body: `Your QR code has expired. Please rebook your prescription pickup.`,
-      status: "queued",
-      deliveryMode: "prototype_firestore",
-      createdAt: new Date().toISOString(),
-      createdById: patientId,
-      createdByRole: "patient",
-    })
-  }
-
-  setScanResult({ error: "QR code has expired. Please rebook." })
-  toast.error("QR code has expired. Please rebook.")
-  mutate()
-  globalMutate("email-logs")
-  return
-}
+        setScanResult({ error: "This QR code has already been used" })
+        toast.error("This QR code has already been used")
+        return
+      }
 
       if (new Date(qr.expiresAt) < new Date()) {
         const bookingRef = doc(db, "bookings", qr.bookingId)
@@ -373,7 +359,7 @@ if (new Date(qr.expiresAt) < new Date()) {
 
           if (booking.prescriptionId) {
             await updateDoc(doc(db, "prescriptions", booking.prescriptionId), {
-              status: "expired",
+              status: "confirmed",
             })
           }
 
@@ -383,7 +369,16 @@ if (new Date(qr.expiresAt) < new Date()) {
             prescriptionId: booking.prescriptionId,
             type: "expired",
             subject: "QR Code Expired - Rebooking Required",
-            body: `Your QR code has expired. Please rebook your prescription pickup.`,
+            body: `Hello ${data?.patientName || "Patient"},
+
+Your QR code for prescription pickup has expired.
+
+Previous booking details:
+- Pharmacy: ${booking.pharmacyName}
+- Pickup time: ${booking.pickupTime}
+
+Please book a new pickup slot from your patient dashboard to receive a new QR token.
+`,
             status: "queued",
             deliveryMode: "prototype_firestore",
             createdAt: new Date().toISOString(),
@@ -409,20 +404,20 @@ if (new Date(qr.expiresAt) < new Date()) {
       }
 
       const booking = {
-  id: bookingSnap.id,
-  ...(bookingSnap.data() as Omit<Booking, "id">),
-} as Booking
+        id: bookingSnap.id,
+        ...(bookingSnap.data() as Omit<Booking, "id">),
+      } as Booking
 
-if (!["locker_assigned", "ready"].includes(booking.status)) {
-  setScanResult({ error: "This booking is not ready for collection yet" })
-  toast.error("This booking is not ready for collection yet")
-  return
-}
+      if (!["locker_assigned", "ready"].includes(booking.status)) {
+        setScanResult({ error: "This booking is not ready for collection yet" })
+        toast.error("This booking is not ready for collection yet")
+        return
+      }
 
-const lockerQuery = query(
-  collection(db, "lockers"),
-  where("bookingId", "==", booking.id)
-)
+      const lockerQuery = query(
+        collection(db, "lockers"),
+        where("bookingId", "==", booking.id)
+      )
       const lockerSnap = await getDocs(lockerQuery)
 
       let lockerLabel = "Unknown"
@@ -556,6 +551,13 @@ const lockerQuery = query(
       return
     }
 
+    const slotStart = parseSlotStart(pickupDate, pickupTime)
+
+    if (slotStart.getTime() <= Date.now()) {
+      toast.error("Please choose a pickup time slot that has not passed")
+      return
+    }
+
     const emailToUse = data?.patientEmail || patientEmail
 
     if (!emailToUse) {
@@ -598,8 +600,8 @@ const lockerQuery = query(
         createdAt: new Date().toISOString(),
       })
 
-      const expiresAt = new Date()
-      expiresAt.setMinutes(expiresAt.getMinutes() + 60)
+      const expiresAt = parseSlotEnd(pickupDate, pickupTime)
+      expiresAt.setMinutes(expiresAt.getMinutes() + 30)
 
       const qrToken =
         typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -630,10 +632,11 @@ Booking details:
 QR token to unlock locker:
 ${qrToken}
 
+QR expiry:
+${expiresAt.toLocaleString()}
+
 Instructions:
 Use this QR token when collecting your prescription to unlock the locker.
-
-This is a prototype email record stored in Firestore.
 `
 
       await addDoc(collection(db, "emailLogs"), {
@@ -821,7 +824,11 @@ This is a prototype email record stored in Firestore.
                       </p>
                     </div>
                     {scanResult.bookingId && (
-                      <Button size="sm" onClick={() => handleCloseLocker(scanResult.bookingId!)} className="mt-2">
+                      <Button
+                        size="sm"
+                        onClick={() => handleCloseLocker(scanResult.bookingId!)}
+                        className="mt-2"
+                      >
                         <Lock className="mr-1.5 h-4 w-4" />
                         Close Locker After Collection
                       </Button>
@@ -836,6 +843,54 @@ This is a prototype email record stored in Firestore.
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showQrDialog} onOpenChange={setShowQrDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Pickup QR Token</DialogTitle>
+            <DialogDescription>
+              Show this QR token when collecting your medication.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedQrItem?.qr && selectedQrItem?.booking ? (
+            <div className="space-y-4 text-center">
+              <div className="rounded-xl border border-dashed bg-muted p-6">
+                <QrCode className="mx-auto h-16 w-16 text-foreground" />
+                <p className="mt-4 break-all font-mono text-sm text-foreground">
+                  {selectedQrItem.qr.token}
+                </p>
+              </div>
+
+              <div className="space-y-1 text-sm">
+                <p className="text-muted-foreground">
+                  Booking: <span className="font-medium text-foreground">{selectedQrItem.booking.id}</span>
+                </p>
+                <p className="text-muted-foreground">
+                  Pharmacy:{" "}
+                  <span className="font-medium text-foreground">
+                    {selectedQrItem.booking.pharmacyName}
+                  </span>
+                </p>
+                <p className="text-muted-foreground">
+                  Pickup Time:{" "}
+                  <span className="font-medium text-foreground">
+                    {selectedQrItem.booking.pickupTime}
+                  </span>
+                </p>
+                <p className="text-muted-foreground">
+                  Expires:{" "}
+                  <span className="font-medium text-foreground">
+                    {new Date(selectedQrItem.qr.expiresAt).toLocaleString()}
+                  </span>
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No active QR code available.</p>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -915,7 +970,9 @@ This is a prototype email record stored in Firestore.
 
               <div className="rounded-lg bg-muted p-3 text-sm">
                 <p className="text-xs text-muted-foreground">Email</p>
-                <p className="font-medium text-foreground">{data?.patientEmail || patientEmail || "No email found"}</p>
+                <p className="font-medium text-foreground">
+                  {data?.patientEmail || patientEmail || "No email found"}
+                </p>
               </div>
 
               <div className="space-y-2">
@@ -944,7 +1001,7 @@ This is a prototype email record stored in Firestore.
                   type="date"
                   value={pickupDate}
                   onChange={(e) => setPickupDate(e.target.value)}
-                  min={new Date().toISOString().split("T")[0]}
+                  min={todayString}
                 />
               </div>
 
@@ -1025,6 +1082,7 @@ This is a prototype email record stored in Firestore.
                   onCloseLocker={handleCloseLocker}
                   onRequestRefill={openRefillDialog}
                   onBookPrescription={openBookingDialog}
+                  onViewQr={openQrDialog}
                   hasPendingRefill={hasPendingRefill(item.prescription.id)}
                   refillRequest={getRefillRequestStatus(item.prescription.id)}
                 />
@@ -1062,6 +1120,7 @@ function PatientPrescriptionCard({
   onCloseLocker,
   onRequestRefill,
   onBookPrescription,
+  onViewQr,
   hasPendingRefill,
   refillRequest,
 }: {
@@ -1069,14 +1128,22 @@ function PatientPrescriptionCard({
   onCloseLocker: (bookingId: string) => void
   onRequestRefill: (prescription: Prescription) => void
   onBookPrescription: (prescription: Prescription) => void
+  onViewQr: (item: PatientItem) => void
   hasPendingRefill: boolean
   refillRequest?: RefillRequest
 }) {
-  const { prescription: rx, booking, locker } = item
+  const { prescription: rx, booking, locker, qr } = item
   const canRequestRefill = rx.status === "collected" && !hasPendingRefill
   const canBookPickup =
     rx.status === "confirmed" &&
     (!booking || ["expired", "collected"].includes(booking.status))
+
+  const canViewQr =
+    !!qr &&
+    !!booking &&
+    ["pending", "locker_assigned", "ready"].includes(booking.status) &&
+    !qr.used &&
+    new Date(qr.expiresAt) > new Date()
 
   const statusSteps = [
     { key: "confirmed", label: "Prescribed", icon: CheckCircle2, done: true },
@@ -1157,6 +1224,17 @@ function PatientPrescriptionCard({
           </div>
         )}
 
+        {booking?.status === "expired" && (
+          <div className="rounded-lg border border-destructive bg-[hsl(0,70%,97%)] p-3">
+            <div className="flex items-center gap-2">
+              <XCircle className="h-4 w-4 text-destructive" />
+              <p className="text-sm font-medium text-destructive">
+                Your previous QR code expired. Please book a new pickup slot.
+              </p>
+            </div>
+          </div>
+        )}
+
         {locker && locker.status === "unlocked" && booking && (
           <div className="rounded-lg border border-[hsl(152,60%,40%)] bg-[hsl(152,40%,95%)] p-4">
             <div className="flex items-center justify-between">
@@ -1177,6 +1255,17 @@ function PatientPrescriptionCard({
               </Button>
             </div>
           </div>
+        )}
+
+        {canViewQr && (
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => onViewQr(item)}
+          >
+            <QrCode className="mr-1.5 h-4 w-4" />
+            View QR
+          </Button>
         )}
 
         {canBookPickup && (
