@@ -111,48 +111,7 @@ export function LoginForm() {
     }
   }
 
-  async function handleDemoLogin(demoEmail: string, demoPassword: string) {
-    setLoading(true)
-
-    try {
-      const result = await firebaseSignIn({
-        email: demoEmail,
-        password: demoPassword,
-      })
-
-      const firebaseUser = result.user
-
-      const userProfile = await getUserProfile(firebaseUser.uid, firebaseUser.email || demoEmail)
-
-      if (!userProfile) {
-        toast.error("User profile not found")
-        return
-      }
-
-      if (userProfile.status === "disabled") {
-        toast.error("This account has been disabled")
-        return
-      }
-
-      toast.success(`Welcome, ${userProfile.name}`)
-      console.log("ROLE:", userProfile.role)
-      console.log("REDIRECT TO:", roleMap[userProfile.role] || "/")
-      router.push(roleMap[userProfile.role] || "/")
-      router.refresh()
-    } catch (error: any) {
-      switch (error.code) {
-        case "auth/invalid-credential":
-        case "auth/wrong-password":
-        case "auth/user-not-found":
-          toast.error("Invalid demo account credentials")
-          break
-        default:
-          toast.error("Demo login failed")
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
+  
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -215,24 +174,6 @@ export function LoginForm() {
               </Button>
             </form>
 
-            <div className="mt-6">
-              <p className="mb-3 text-xs font-medium text-muted-foreground">Quick Demo Access</p>
-              <div className="grid grid-cols-2 gap-2">
-                {DEMO_ACCOUNTS.map((acc) => (
-                  <Button
-                    key={acc.email}
-                    variant="outline"
-                    size="sm"
-                    className="text-xs bg-transparent"
-                    disabled={loading}
-                    type="button"
-                    onClick={() => handleDemoLogin(acc.email, acc.password)}
-                  >
-                    {acc.role}
-                  </Button>
-                ))}
-              </div>
-            </div>
           </CardContent>
           <CardFooter className="flex justify-center">
             <p className="text-sm text-muted-foreground">
