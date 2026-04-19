@@ -20,13 +20,6 @@ const roleMap: Record<string, string> = {
   patient: "/dashboard/patient",
 }
 
-const DEMO_ACCOUNTS = [
-  { email: "doctor@demo.com", password: "password123", role: "Doctor" },
-  { email: "clinic@demo.com", password: "password123", role: "Clinic Staff" },
-  { email: "pharmacy@demo.com", password: "password123", role: "Pharmacy Staff" },
-  { email: "patient@demo.com", password: "password123", role: "Patient" },
-]
-
 type AppUser = {
   uid?: string
   name: string
@@ -121,7 +114,7 @@ export function LoginForm() {
             <Shield className="h-7 w-7 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Healthcare Dispensary System</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">SMART Healthcare System</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Secure prescription management with AI-assisted risk assessment
             </p>
