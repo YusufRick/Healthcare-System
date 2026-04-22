@@ -182,33 +182,42 @@ export function DoctorDashboard({ doctor }: { doctor: DoctorContext }) {
   }
 
   const handleAssessRisk = useCallback(async () => {
-    const medNames = medications.filter((m) => m.name).map((m) => m.name)
+  const medsForAssessment = medications
+    .filter((m) => m.name)
+    .map((m) => ({
+      name: m.name,
+      dosage: m.dosage,
+    }))
 
-    if (medNames.length === 0 || !selectedPatientId) {
-      toast.error("Select a patient and add at least one medication first")
-      return
-    }
+  if (medsForAssessment.length === 0 || !selectedPatientId) {
+    toast.error("Select a patient and add at least one medication first")
+    return
+  }
 
-    setAssessing(true)
-    try {
-      const res = await runRiskAssessment(medNames, selectedPatient?.allergies ?? [])
-      if (res.error) {
-        toast.error(res.error)
-      } else if (res.assessment) {
-        setRiskResult(res.assessment)
+  setAssessing(true)
+  try {
+    const res = await runRiskAssessment(
+      medsForAssessment,
+      selectedPatient?.allergies ?? []
+    )
 
-        if (res.assessment.status === "unsafe") {
-          toast.warning("High risk detected. Review alerts before confirming.")
-        } else if (res.assessment.status === "review") {
-          toast.warning("Potential medication risks found. Please review the alerts.")
-        } else {
-          toast.success("Risk assessment completed.")
-        }
+    if (res.error) {
+      toast.error(res.error)
+    } else if (res.assessment) {
+      setRiskResult(res.assessment)
+
+      if (res.assessment.status === "unsafe") {
+        toast.warning("High risk detected. Review alerts before confirming.")
+      } else if (res.assessment.status === "review") {
+        toast.warning("Potential medication risks found. Please review the alerts.")
+      } else {
+        toast.success("Risk assessment completed.")
       }
-    } finally {
-      setAssessing(false)
     }
-  }, [medications, selectedPatientId, selectedPatient])
+  } finally {
+    setAssessing(false)
+  }
+}, [medications, selectedPatientId, selectedPatient])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

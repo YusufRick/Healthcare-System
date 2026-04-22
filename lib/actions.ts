@@ -286,19 +286,132 @@ export async function getPatientList() {
   return { patients }
 }
 
+type RiskCheckMedication = {
+  name: string
+  dosage?: string
+}
+
+function parseSingleDoseMg(dosage?: string): number | null {
+  if (!dosage) return null
+
+  const text = dosage.trim().toLowerCase()
+
+  const mgMatch =
+    text.match(/(\d+(?:\.\d+)?)\s*mg\b/i) ??
+    text.match(/^(\d+(?:\.\d+)?)$/)
+
+  if (!mgMatch) return null
+
+  return Number(mgMatch[1])
+}
+
+function parseDailyDoseMg(dosage?: string): number | null {
+  if (!dosage) return null
+
+  const text = dosage.trim().toLowerCase()
+
+  const mgMatch =
+    text.match(/(\d+(?:\.\d+)?)\s*mg\b/i) ??
+    text.match(/^(\d+(?:\.\d+)?)$/)
+
+  if (!mgMatch) return null
+
+  const amountMg = Number(mgMatch[1])
+
+  let multiplier = 1
+
+  if (/once daily|once a day|daily|\bod\b/i.test(text)) {
+    multiplier = 1
+  } else if (/twice daily|twice a day|\bbid\b|2x/i.test(text)) {
+    multiplier = 2
+  } else if (/three times daily|three times a day|\btid\b|3x/i.test(text)) {
+    multiplier = 3
+  } else if (/four times daily|four times a day|\bqid\b|4x/i.test(text)) {
+    multiplier = 4
+  } else {
+    const everyHoursMatch = text.match(/every\s+(\d+)\s*hours?/i)
+    if (everyHoursMatch) {
+      const hours = Number(everyHoursMatch[1])
+      if (hours > 0) {
+        multiplier = Math.max(1, Math.floor(24 / hours))
+      }
+    }
+  }
+
+  return amountMg * multiplier
+}
+
+function extractMaxDailyMg(label: any): number | null {
+  const text = [
+    ...(Array.isArray(label.dosage_and_administration) ? label.dosage_and_administration : []),
+    ...(Array.isArray(label.dosage_and_administration_table) ? label.dosage_and_administration_table : []),
+    ...(Array.isArray(label.dosage_forms_and_strengths) ? label.dosage_forms_and_strengths : []),
+    ...(Array.isArray(label.dosage_forms_and_strengths_table) ? label.dosage_forms_and_strengths_table : []),
+    ...(Array.isArray(label.overdosage) ? label.overdosage : []),
+    ...(Array.isArray(label.use_in_specific_populations) ? label.use_in_specific_populations : []),
+    ...(Array.isArray(label.pediatric_use) ? label.pediatric_use : []),
+    ...(Array.isArray(label.geriatric_use) ? label.geriatric_use : []),
+  ]
+    .join(" ")
+    .replace(/\s+/g, " ")
+
+  const patterns = [
+    /maximum recommended dose(?: is|:)?\s*(\d+(?:\.\d+)?)\s*mg(?:\/day| per day| daily)?/i,
+    /maximum daily dose(?: is|:)?\s*(\d+(?:\.\d+)?)\s*mg/i,
+    /max(?:imum)? daily dose(?: is|:)?\s*(\d+(?:\.\d+)?)\s*mg/i,
+    /do not exceed\s*(\d+(?:\.\d+)?)\s*mg(?:\/day| per day| daily)?/i,
+    /should not exceed\s*(\d+(?:\.\d+)?)\s*mg(?:\/day| per day| daily)?/i,
+    /not to exceed\s*(\d+(?:\.\d+)?)\s*mg(?:\/day| per day| daily)?/i,
+    /total daily dose(?: of)?\s*(\d+(?:\.\d+)?)\s*mg/i,
+  ]
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match) {
+      return Number(match[1])
+    }
+  }
+
+  return null
+}
+
+function extractProductStrengthMg(drugInfo: any): number | null {
+  const products = Array.isArray(drugInfo?.products) ? drugInfo.products : []
+
+  for (const product of products) {
+    const ingredients = Array.isArray(product?.active_ingredients)
+      ? product.active_ingredients
+      : []
+
+    for (const ingredient of ingredients) {
+      const strength =
+        typeof ingredient?.strength === "string" ? ingredient.strength : ""
+
+      const match = strength.match(/(\d+(?:\.\d+)?)\s*mg\b/i)
+      if (match) {
+        return Number(match[1])
+      }
+    }
+  }
+
+  return null
+}
+
 export async function runRiskAssessment(
-  medications: string[],
+  medications: RiskCheckMedication[],
   patientAllergies: string[] = []
 ): Promise<{ assessment?: RiskAssessmentResult; error?: string }> {
   try {
     const issues: RiskAssessmentResult["issues"] = []
     const apiKey = process.env.OPENFDA_API_KEY
 
-    const fetchDrugLabel = async (drugName: string) => {
-      const search = encodeURIComponent(
+    const makeSearch = (drugName: string) =>
+      encodeURIComponent(
         `openfda.brand_name:"${drugName}" OR openfda.generic_name:"${drugName}"`
       )
 
+    const fetchDrugLabel = async (drugName: string) => {
+      const search = makeSearch(drugName)
       const baseUrl = "https://api.fda.gov/drug/label.json"
       const url = apiKey
         ? `${baseUrl}?api_key=${apiKey}&search=${search}&limit=1`
@@ -309,25 +422,42 @@ export async function runRiskAssessment(
         cache: "no-store",
       })
 
-      if (!res.ok) {
-        return null
-      }
+      if (!res.ok) return null
+
+      const data = await res.json()
+      return data?.results?.[0] ?? null
+    }
+
+    const fetchDrugProductInfo = async (drugName: string) => {
+      const search = makeSearch(drugName)
+      const baseUrl = "https://api.fda.gov/drug/drugsfda.json"
+      const url = apiKey
+        ? `${baseUrl}?api_key=${apiKey}&search=${search}&limit=1`
+        : `${baseUrl}?search=${search}&limit=1`
+
+      const res = await fetch(url, {
+        method: "GET",
+        cache: "no-store",
+      })
+
+      if (!res.ok) return null
 
       const data = await res.json()
       return data?.results?.[0] ?? null
     }
 
     const labels = await Promise.all(
-      medications.map(async (name) => ({
-        name,
-        label: await fetchDrugLabel(name),
+      medications.map(async (med) => ({
+        ...med,
+        label: await fetchDrugLabel(med.name),
+        productInfo: await fetchDrugProductInfo(med.name),
       }))
     )
 
-    for (const { name, label } of labels) {
+    for (const { name, dosage, label, productInfo } of labels) {
       if (!label) continue
 
-      const labelText = [
+      const allergyText = [
         ...(Array.isArray(label.contraindications) ? label.contraindications : []),
         ...(Array.isArray(label.warnings) ? label.warnings : []),
         ...(Array.isArray(label.warnings_and_cautions) ? label.warnings_and_cautions : []),
@@ -337,11 +467,46 @@ export async function runRiskAssessment(
         .toLowerCase()
 
       for (const allergy of patientAllergies) {
-        if (labelText.includes(allergy.toLowerCase())) {
+        if (allergyText.includes(allergy.toLowerCase())) {
           issues.push({
             code: "ALLERGY_CONFLICT",
             severity: "high",
             message: `${name} may conflict with patient allergy: ${allergy}`,
+            medicationName: name,
+          })
+        }
+      }
+
+      const singleDoseMg = parseSingleDoseMg(dosage)
+      const prescribedDailyMg = parseDailyDoseMg(dosage)
+      const maxDailyMg = extractMaxDailyMg(label)
+      const productStrengthMg = extractProductStrengthMg(productInfo)
+
+      if (
+        prescribedDailyMg !== null &&
+        maxDailyMg !== null &&
+        prescribedDailyMg > maxDailyMg
+      ) {
+        issues.push({
+          code: "DOSAGE_LIMIT",
+          severity: "high",
+          message: `${name} prescribed dose may exceed labeled maximum daily dose (${prescribedDailyMg} mg/day vs ${maxDailyMg} mg/day).`,
+          medicationName: name,
+        })
+      }
+
+      if (
+        singleDoseMg !== null &&
+        productStrengthMg !== null &&
+        productStrengthMg > 0
+      ) {
+        const strengthMultiple = singleDoseMg / productStrengthMg
+
+        if (strengthMultiple >= 10) {
+          issues.push({
+            code: "DOSAGE_STRENGTH_MISMATCH",
+            severity: "medium",
+            message: `${name} entered dose (${singleDoseMg} mg) is far above the product strength (${productStrengthMg} mg per unit). Please verify the dose and units.`,
             medicationName: name,
           })
         }
@@ -366,6 +531,7 @@ export async function runRiskAssessment(
             code: "DRUG_INTERACTION",
             severity: "medium",
             message: `Potential interaction between ${medA.name} and ${medB.name}`,
+            medicationName: medA.name,
           })
         }
       }
