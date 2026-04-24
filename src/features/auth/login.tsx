@@ -116,7 +116,7 @@ export function LoginForm() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground">SMART Healthcare System</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Secure prescription management with AI-assisted risk assessment
+              Connecting doctors, clinics, pharmacies, and patients for better healthcare management
             </p>
           </div>
         </div>

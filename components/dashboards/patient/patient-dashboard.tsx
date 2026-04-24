@@ -766,18 +766,18 @@ Use this QR token when collecting your prescription to unlock the locker.
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 p-6">
-      <div className="flex items-center justify-between">
+    <div className="mx-auto max-w-7xl space-y-4 p-4 sm:space-y-6 sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <User className="h-6 w-6 text-primary" />
+          <User className="h-5 w-5 text-primary sm:h-6 sm:w-6" />
           <div>
-            <h2 className="text-xl font-semibold text-foreground">Patient Dashboard</h2>
-            <p className="text-sm text-muted-foreground">
+            <h2 className="text-lg font-semibold text-foreground sm:text-xl">Patient Dashboard</h2>
+            <p className="text-xs text-muted-foreground sm:text-sm">
               View your prescriptions and collect medication
             </p>
           </div>
         </div>
-        <Button onClick={() => setShowScanDialog(true)}>
+        <Button onClick={() => setShowScanDialog(true)} className="w-full sm:w-auto">
           <QrCode className="mr-1.5 h-4 w-4" />
           Scan QR Code
         </Button>
@@ -1050,10 +1050,10 @@ Use this QR token when collecting your prescription to unlock the locker.
       </Dialog>
 
       <Tabs defaultValue="prescriptions" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="prescriptions">My Prescriptions</TabsTrigger>
-          <TabsTrigger value="refill-requests">
-            Refill Requests
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="prescriptions" className="text-xs sm:text-sm">My Prescriptions</TabsTrigger>
+          <TabsTrigger value="refill-requests" className="text-xs sm:text-sm">
+            Refills
             {refillRequests.filter((r) => r.status === "pending").length > 0 && (
               <Badge variant="secondary" className="ml-2">
                 {refillRequests.filter((r) => r.status === "pending").length}
@@ -1184,22 +1184,22 @@ function PatientPrescriptionCard({
       </CardHeader>
 
       <CardContent className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2 sm:flex-nowrap">
           {statusSteps.map((step, i) => {
             const Icon = step.icon
             return (
               <div key={step.key} className="flex items-center gap-1">
                 <div
-                  className={`flex items-center gap-1.5 ${
+                  className={`flex items-center gap-1 sm:gap-1.5 ${
                     step.done ? "text-primary" : "text-muted-foreground"
                   }`}
                 >
-                  <Icon className="h-4 w-4" />
-                  <span className="text-xs font-medium">{step.label}</span>
+                  <Icon className="h-3 w-3 sm:h-4 sm:w-4" />
+                  <span className="text-[10px] font-medium sm:text-xs">{step.label}</span>
                 </div>
                 {i < statusSteps.length - 1 && (
                   <div
-                    className={`ml-2 h-px w-8 ${
+                    className={`ml-1 h-px w-4 sm:ml-2 sm:w-8 ${
                       step.done ? "bg-primary" : "bg-border"
                     }`}
                   />
@@ -1211,14 +1211,14 @@ function PatientPrescriptionCard({
 
         {booking && (
           <div className="rounded-lg bg-muted p-3 text-sm">
-            <div className="flex items-center gap-4">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4">
               <div>
                 <p className="text-xs text-muted-foreground">Pharmacy</p>
-                <p className="font-medium text-foreground">{booking.pharmacyName}</p>
+                <p className="text-sm font-medium text-foreground">{booking.pharmacyName}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Pickup Time</p>
-                <p className="font-medium text-foreground">{booking.pickupTime}</p>
+                <p className="text-sm font-medium text-foreground">{booking.pickupTime}</p>
               </div>
             </div>
           </div>
@@ -1236,20 +1236,20 @@ function PatientPrescriptionCard({
         )}
 
         {locker && locker.status === "unlocked" && booking && (
-          <div className="rounded-lg border border-[hsl(152,60%,40%)] bg-[hsl(152,40%,95%)] p-4">
-            <div className="flex items-center justify-between">
+          <div className="rounded-lg border border-[hsl(152,60%,40%)] bg-[hsl(152,40%,95%)] p-3 sm:p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <Unlock className="h-6 w-6 text-[hsl(152,60%,40%)]" />
+                <Unlock className="h-5 w-5 text-[hsl(152,60%,40%)] sm:h-6 sm:w-6" />
                 <div>
-                  <p className="font-medium text-[hsl(152,60%,25%)]">
+                  <p className="text-sm font-medium text-[hsl(152,60%,25%)] sm:text-base">
                     Locker {locker.label} is Open
                   </p>
-                  <p className="text-sm text-[hsl(152,60%,30%)]">
+                  <p className="text-xs text-[hsl(152,60%,30%)] sm:text-sm">
                     Please collect your medication
                   </p>
                 </div>
               </div>
-              <Button size="sm" onClick={() => onCloseLocker(booking.id)}>
+              <Button size="sm" onClick={() => onCloseLocker(booking.id)} className="w-full sm:w-auto">
                 <Lock className="mr-1.5 h-4 w-4" />
                 Close Locker
               </Button>
