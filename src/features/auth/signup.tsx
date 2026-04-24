@@ -77,7 +77,7 @@ export function SignupForm() {
             <Shield className="h-7 w-7 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Healthcare Dispensary System</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">SMART Healthcare System</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Create your account to get started
             </p>
