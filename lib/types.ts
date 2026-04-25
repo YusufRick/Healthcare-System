@@ -55,10 +55,7 @@ export interface PrescribedMedication {
   medId: string
   name: string
   dosage: string
-  frequency: string
-  duration: string
-  quantity: number
-  instructions: string
+
 }
 
 // Legacy type for older risk-check code

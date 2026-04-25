@@ -308,31 +308,48 @@ export function PatientDashboard() {
     setShowQrDialog(true)
   }
 
+// PURPOSE: Patient presents their QR token to collect medication.
+// Validates: token exists, not already used, not expired.
+// On success: marks token used, unlocks the assigned locker.
+// On expiry: marks booking expired, sends rebooking email.
   async function handleScan() {
+
+    //if token is empty, show error and 
+    // return early to avoid unnecessary Firestore queries.
     if (!scanToken.trim()) {
       toast.error("Please enter a QR code token")
       return
     }
 
+    //if patient is not authenticated, show error and return early.
     if (!patientId) {
       toast.error("Not authenticated")
       return
     }
 
     setScanning(true)
+
+    // The scan process involves multiple steps:
+    // 1. Validate the QR token exists and is valid.
+    // 2. Check if the token has already been used.
+    // 3. Check if the token has expired.
+    // 4. If valid, mark the token as used and unlock the locker.
     try {
       const qrQuery = query(
         collection(db, "qrCodes"),
-        where("token", "==", scanToken.trim())
+        where("token", "==", scanToken.trim()) //fetch the QR code document matching the entered token.
       )
       const qrSnap = await getDocs(qrQuery)
 
+      //if no matching QR code is found, show error and return.
       if (qrSnap.empty) {
         setScanResult({ error: "Invalid QR code" })
         toast.error("Invalid QR code")
         return
       }
 
+      //if QR code is found, extract the data and perform further validations.
+      //  We check if the QR code has already been used or if it has expired.
       const qrDoc = qrSnap.docs[0]
       const qr = {
         id: qrDoc.id,
@@ -345,6 +362,7 @@ export function PatientDashboard() {
         return
       }
 
+      // Check if the QR code has expired by comparing the current time with the expiresAt field.
       if (new Date(qr.expiresAt) < new Date()) {
         const bookingRef = doc(db, "bookings", qr.bookingId)
         const bookingSnap = await getDoc(bookingRef)
@@ -363,6 +381,7 @@ export function PatientDashboard() {
             })
           }
 
+          //sends an email to the patient notifying them of the expiry and prompting them to rebook.
           await addDoc(collection(db, "emailLogs"), {
             to: booking.patientEmail,
             bookingId: booking.id,
@@ -387,6 +406,9 @@ Please book a new pickup slot from your patient dashboard to receive a new QR to
           })
         }
 
+        // If the QR code has expired,
+        // we mark the booking as expired and send an email to the patient.
+
         setScanResult({ error: "QR code has expired. Please rebook." })
         toast.error("QR code has expired. Please rebook.")
         mutate()
@@ -395,6 +417,9 @@ Please book a new pickup slot from your patient dashboard to receive a new QR to
       }
 
       await updateDoc(doc(db, "qrCodes", qr.id), { used: true })
+
+      // After validating the QR code,
+      // we fetch the associated booking to get details like the assigned locker.
 
       const bookingSnap = await getDoc(doc(db, "bookings", qr.bookingId))
       if (!bookingSnap.exists()) {
@@ -408,6 +433,9 @@ Please book a new pickup slot from your patient dashboard to receive a new QR to
         ...(bookingSnap.data() as Omit<Booking, "id">),
       } as Booking
 
+
+      // We check if the booking status is still valid for collection
+      //  (e.g., "locker_assigned" or "ready").
       if (!["locker_assigned", "ready"].includes(booking.status)) {
         setScanResult({ error: "This booking is not ready for collection yet" })
         toast.error("This booking is not ready for collection yet")
@@ -465,6 +493,9 @@ Please book a new pickup slot from your patient dashboard to receive a new QR to
       return
     }
 
+    //updates the booking status to "collected"
+    //  and locker status to "available" after the patient
+    //  has collected their medication and closed the locker.
     try {
       const bookingRef = doc(db, "bookings", bookingId)
       const bookingSnap = await getDoc(bookingRef)
@@ -501,6 +532,8 @@ Please book a new pickup slot from your patient dashboard to receive a new QR to
           ...(lockerDoc.data() as Omit<Locker, "id">),
         } as Locker
 
+        //set the locker status to "available" and 
+        // remove the bookingId to indicate it's ready for the next use.
         await updateDoc(doc(db, "lockers", locker.id), {
           status: "available",
           bookingId: null,
@@ -682,6 +715,11 @@ Use this QR token when collecting your prescription to unlock the locker.
     }
   }
 
+
+
+// PURPOSE: Submits a refill request to the original doctor.
+// Includes a duplicate check to prevents multiple pending requests
+// for the same prescription from the same patient.
   async function handleSubmitRefill() {
     if (!patientId) {
       toast.error("Not authenticated")
@@ -694,6 +732,7 @@ Use this QR token when collecting your prescription to unlock the locker.
     }
 
     setSubmittingRefill(true)
+
     try {
       const existingQuery = query(
         collection(db, "refillRequests"),
@@ -707,6 +746,12 @@ Use this QR token when collecting your prescription to unlock the locker.
         toast.error("A refill request is already pending for this prescription")
         return
       }
+
+      //adds a new document to the "refillRequests" collection
+      //  with details about the request and reasons provided by the patient.
+      // The request is linked to the original prescription and the doctor who issued it
+      //by including the prescriptionId and doctorId fields.
+      //The status is set to "pending" for the doctor to review.
 
       await addDoc(collection(db, "refillRequests"), {
         prescriptionId: selectedPrescription.id,
@@ -771,7 +816,7 @@ Use this QR token when collecting your prescription to unlock the locker.
         <div className="flex items-center gap-3">
           <User className="h-5 w-5 text-primary sm:h-6 sm:w-6" />
           <div>
-            <h2 className="text-lg font-semibold text-foreground sm:text-xl">Patient Dashboard</h2>
+            <h2 className="text-lg font-semibold text-foreground sm:text-xl">{data?.patientName || "Patient"} Dashboard</h2>
             <p className="text-xs text-muted-foreground sm:text-sm">
               View your prescriptions and collect medication
             </p>

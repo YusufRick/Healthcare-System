@@ -29,28 +29,35 @@ interface RiskDisplayProps {
   compact?: boolean
 }
 
+// Normalizes the raw assessment status into display levels.
+// "unsafe" → "High", "review" → "Medium", "safe" → "Low"
 function getNormalizedLevel(status: RiskAssessmentResult["status"]): keyof typeof levelConfig {
   if (status === "unsafe") return "High"
   if (status === "review") return "Medium"
   return "Low"
 }
 
+// Calculates a display score (0-100) based on the assessment status and number of issues.
+// "unsafe" starts at 75 + 20 per issue, "review" starts at 40 + 15 per issue, "safe" is always 0.
 function getDisplayScore(status: RiskAssessmentResult["status"], issues: ValidationIssue[]): number {
   if (status === "unsafe") return Math.max(75, issues.length * 20)
   if (status === "review") return Math.max(40, issues.length * 15)
   return 0
 }
 
+// Converts severity code to a user-friendly label and color.
+// "high" → "CRITICAL" (red), "medium" → "WARNING" (orange), "low" → "INFO" (blue)
 function getSeverityLabel(severity: ValidationIssue["severity"]) {
   if (severity === "high") return "CRITICAL"
   if (severity === "medium") return "WARNING"
   return "INFO"
 }
 
+// Determines the issue type label based on the issue code.
+//e.g. if code contains "ALLERGY", it's a "Drug-Allergy" issue; if it contains "DOSAGE", it's a "Dosage" issue; otherwise, it's a "Drug-Drug Interaction".
 function getIssueTypeLabel(code: string) {
   if (code.includes("ALLERGY")) return "Drug-Allergy"
   if (code.includes("DOSAGE")) return "Dosage"
-  if (code.includes("AGE")) return "Age"
   return "Drug-Drug Interaction"
 }
 

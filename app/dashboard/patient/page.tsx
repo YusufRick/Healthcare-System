@@ -68,7 +68,6 @@ export default function PatientPage() {
       <DashboardHeader userName={session.name} userRole={session.role} />
       <main>
         <PatientDashboard />
-        <AuditEmailLogs />
       </main>
     </div>
   )

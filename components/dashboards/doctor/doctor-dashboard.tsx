@@ -219,32 +219,40 @@ export function DoctorDashboard({ doctor }: { doctor: DoctorContext }) {
   }
 }, [medications, selectedPatientId, selectedPatient])
 
+//Purpose: Doctor confirms a new prescription.
+//Includes risk assessment results in the prescription
+//  record and audit logs for traceability.
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
 
+    // Filter out any medications that don't have a name or dosage before submitting
     const validMeds = medications.filter((m) => m.name && m.dosage)
 
+
+    // Basic validation to ensure a patient is selected and at least one valid medication is added
     if (!selectedPatientId || validMeds.length === 0) {
       toast.error("Please select a patient and add at least one medication with dosage")
       return
     }
 
+    //check if the selected patient still exists in the database.
     if (!selectedPatient) {
       toast.error("Patient not found")
       return
     }
 
+    // Format medications for storage in the prescription record
+    //each medication is given a unique medId since we're not linking to a master medication database in this prototype. In a production system, you'd typically reference a medication by its ID from a master list rather than storing the name and dosage directly in the prescription record.
+    // 
     const formattedMeds: PrescribedMedication[] = validMeds.map((m, index) => ({
       medId: `manual-${index}`,
       name: m.name,
       dosage: m.dosage,
-      frequency: "",
-      duration: "",
-      quantity: 0,
-      instructions: "",
     }))
 
     setLoading(true)
+    //add a new document to the "prescriptions" collection with the prescription details,
     try {
       await addDoc(collection(db, "prescriptions"), {
         doctorId: doctor.id,
@@ -295,6 +303,13 @@ export function DoctorDashboard({ doctor }: { doctor: DoctorContext }) {
     }
   }
 
+
+
+// PURPOSE: Doctor approves a pending refill.
+// Auto-creates a new prescription from the refill data.
+// Sends approval email to patient so they can book collection.
+//patient can handle the booking afterwards and choose pickup time and pharmacy,
+//  which will trigger the rest of the workflow.
   async function handleApproveRefill(request: RefillRequest) {
     setProcessingRefill(request.id)
 
@@ -316,6 +331,8 @@ export function DoctorDashboard({ doctor }: { doctor: DoctorContext }) {
         rejectionReason: null,
         respondedAt: new Date().toISOString(),
       })
+
+      
 
       const medSummary = request.medications.map((m) => m.name).join(", ")
 
@@ -369,6 +386,10 @@ This is a prototype email record stored in Firestore.`,
     setShowRejectDialog(true)
   }
 
+  // PURPOSE: Doctor rejects a pending refill request.
+  // Records the rejection reason and sends an email to the patient with the details.
+  // This allows the patient to understand why their refil,
+ 
   async function handleRejectRefill() {
     if (!selectedRefillRequest || !rejectionReason.trim()) {
       toast.error("Please provide a reason for rejection")

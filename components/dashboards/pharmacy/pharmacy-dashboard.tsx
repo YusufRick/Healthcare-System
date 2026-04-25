@@ -184,10 +184,17 @@ function PharmacyCard({
   const [marking, setMarking] = useState(false)
   const [showQR, setShowQR] = useState(false)
 
+
+  //handles assigning a locker to the booking.
+  //  It checks if the locker is still available,
+  //  updates the locker and booking status in Firestore,
+  //  creates an audit log entry, and shows success/error toasts.
   async function handleAssignLocker() {
     if (!booking || !selectedLockerId) return
 
     setAssigning(true)
+
+
     try {
       const lockerRef = doc(db, "lockers", selectedLockerId)
       const lockerSnap = await getDoc(lockerRef)
@@ -197,17 +204,26 @@ function PharmacyCard({
         return
       }
 
+      //check if locker is still available before assigning
+      //by fetching the latest locker data from Firestore and verifying its status.
+      //if locker is no longer available, 
+      // show an error toast and prevent assignment to avoid conflicts
+      //  in a concurrent environment.
       const lockerData = lockerSnap.data() as Omit<Locker, "id">
       if (lockerData.status !== "available") {
         toast.error("Locker is no longer available")
         return
       }
+      //if locker is available,
+      //  proceed with assignment 
+      // by updating locker and booking records in Firestore,
 
       await updateDoc(lockerRef, {
         status: "occupied",
         bookingId: booking.id,
       })
 
+      //update the booking status to "locker_assigned" 
       await updateDoc(doc(db, "bookings", booking.id), {
         status: "locker_assigned",
       })
@@ -234,6 +250,11 @@ function PharmacyCard({
     }
   }
 
+
+  // handles the "Mark as Ready" action, 
+  // which updates the booking and prescription status,
+  //  generates a QR code if needed,
+  //  logs an email to be sent to the patient, and creates an audit log entry.
   async function handleMarkReady() {
     if (!booking) return
 
@@ -249,12 +270,21 @@ function PharmacyCard({
         })
       }
 
+
+      //let's check if a QR code already exists for this booking.
+      //  If it does, we can reuse it,
+      //  if not, we generate a new one.
+      //  This allows us to avoid creating multiple QR codes
+  
       let finalQr = qr
 
       if (!finalQr) {
         const expiresAt = new Date()
         expiresAt.setMinutes(expiresAt.getMinutes() + 60)
 
+        //create a unique token for the QR code.
+        //  In a production system,
+        //  we would want to ensure this token is truly unique and secure,
         const qrToken =
           typeof crypto !== "undefined" && "randomUUID" in crypto
             ? crypto.randomUUID()

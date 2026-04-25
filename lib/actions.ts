@@ -397,6 +397,18 @@ function extractProductStrengthMg(drugInfo: any): number | null {
   return null
 }
 
+// prescribed medications against:
+//   1. Patient allergies 
+//   2. FDA-labelled maximum daily dosage
+//   3. Known drug-drug interactions from FDA label text
+// Design rationale: OpenFDA is a free, authoritative US government
+// API for drug label data. Using it live
+// means the system always reflects the latest FDA labelling.
+//WHY OPENFDA?
+//I avoid the complexity and maintenance of building and updating our own drug database,
+//  which would require constant manual curation to stay current.
+//  OpenFDA provides comprehensive,
+//  regularly updated drug label data that includes the necessary information for our risk checks (contraindications, dosage limits, interactions). By leveraging this existing resource, we can implement robust risk assessment features with less development overhead and ensure our system reflects the most up-to-date safety information.
 export async function runRiskAssessment(
   medications: RiskCheckMedication[],
   patientAllergies: string[] = []
@@ -405,11 +417,17 @@ export async function runRiskAssessment(
     const issues: RiskAssessmentResult["issues"] = []
     const apiKey = process.env.OPENFDA_API_KEY
 
+    // Build URL-safe search query for OpenFDA
+    // We search both brand name AND generic name for maximum match coverage
     const makeSearch = (drugName: string) =>
       encodeURIComponent(
         `openfda.brand_name:"${drugName}" OR openfda.generic_name:"${drugName}"`
       )
 
+    // HELPER: fetchDrugLabel
+    // Fetches the full FDA drug label for a given medication name.
+    // The label contains: contraindications, warnings, dosage limits,
+    // drug interactions, active ingredients.
     const fetchDrugLabel = async (drugName: string) => {
       const search = makeSearch(drugName)
       const baseUrl = "https://api.fda.gov/drug/label.json"
@@ -428,6 +446,10 @@ export async function runRiskAssessment(
       return data?.results?.[0] ?? null
     }
 
+    // Fetches product-level data (active ingredient strengths per unit).
+    // Used to detect if a prescribed single dose is unrealistically
+    // high relative to the product's available strength (e.g. 1000mg
+    // when the tablet is 10mg — likely a human error).
     const fetchDrugProductInfo = async (drugName: string) => {
       const search = makeSearch(drugName)
       const baseUrl = "https://api.fda.gov/drug/drugsfda.json"
@@ -446,6 +468,9 @@ export async function runRiskAssessment(
       return data?.results?.[0] ?? null
     }
 
+    //fetches all labels in parallel for efficiency, 
+    // since each label fetch can be slow due to the large amount of text data
+
     const labels = await Promise.all(
       medications.map(async (med) => ({
         ...med,
@@ -454,8 +479,12 @@ export async function runRiskAssessment(
       }))
     )
 
+    // CHECK 1: ALLERGY CONFLICTS
+    // For each medication, scan the FDA label's contraindications
+    // and warnings text. If any patient allergy appears in that text,
+    // flag it as a HIGH severity issue.
     for (const { name, dosage, label, productInfo } of labels) {
-      if (!label) continue
+      if (!label) continue // If we can't fetch label data, we skip checks for that medication
 
       const allergyText = [
         ...(Array.isArray(label.contraindications) ? label.contraindications : []),
@@ -466,6 +495,7 @@ export async function runRiskAssessment(
         .join(" ")
         .toLowerCase()
 
+      // Check each patient allergy against the combined label text
       for (const allergy of patientAllergies) {
         if (allergyText.includes(allergy.toLowerCase())) {
           issues.push({
@@ -476,6 +506,12 @@ export async function runRiskAssessment(
           })
         }
       }
+
+      // CHECK 2: DOSAGE LIMIT EXCEEDED
+      // parseDailyDoseMg() extracts and calculates total daily mg
+      // (e.g. "500mg twice daily",1000mg/day).
+      // extractMaxDailyMg() finds the FDA-labelled daily maximum.
+      // If prescribed  is more than maximum, flag as HIGH severity.
 
       const singleDoseMg = parseSingleDoseMg(dosage)
       const prescribedDailyMg = parseDailyDoseMg(dosage)
@@ -495,6 +531,11 @@ export async function runRiskAssessment(
         })
       }
 
+      // CHECK 2b: DOSAGE STRENGTH MISMATCH (data entry guard)
+      // If a single prescribed dose is 10x or more the product's
+      // unit strength, it's likely a data entry error (e.g. mg vs mcg).
+      // Flagged as MEDIUM severity — still requires review.
+
       if (
         singleDoseMg !== null &&
         productStrengthMg !== null &&
@@ -512,6 +553,12 @@ export async function runRiskAssessment(
         }
       }
     }
+
+     // CHECK 3: DRUG-DRUG INTERACTIONS
+    // Compare every pair of medications.
+    // For each pair, check if medication B's name appears in
+    // medication A's FDA label drug_interactions section.
+    // O(n²) loop — acceptable since prescriptions rarely have >10 items.
 
     for (let i = 0; i < labels.length; i++) {
       for (let j = i + 1; j < labels.length; j++) {
@@ -537,6 +584,10 @@ export async function runRiskAssessment(
       }
     }
 
+    // FINAL STATUS CALCULATION
+    // If any HIGH severity issue exists, mark it as  "unsafe" (block prescription)
+    // If any MEDIUM severity issue exists, mark it as "review" (proceed with caution, doctor warned)
+    // Otherwise,"safe"
     const hasHigh = issues.some((issue) => issue.severity === "high")
     const hasMedium = issues.some((issue) => issue.severity === "medium")
 

@@ -13,6 +13,11 @@ import { signInWithEmailAndPassword } from "firebase/auth"
 import { doc, getDoc, query, collection, where, getDocs } from "firebase/firestore"
 import { auth, db } from "@/src/config/firebase"
 
+
+
+//Purpose: Handles user login for all roles (doctors, clinic staff, pharmacy staff, patients).
+//Includes role-based redirection after successful login
+//and error handling for common authentication issues.
 const roleMap: Record<string, string> = {
   doctor: "/dashboard/doctor",
   clinic_staff: "/dashboard/clinic",
@@ -78,9 +83,12 @@ export function LoginForm() {
         return
       }
 
+
       toast.success(`Welcome back, ${userProfile.name}`)
       console.log("ROLE:", userProfile.role)
       console.log("REDIRECT TO:", roleMap[userProfile.role] || "/")
+
+      //role-based redirection after login
       router.replace(roleMap[userProfile.role] || "/")
       
     } catch (error: any) {
