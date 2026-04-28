@@ -1,10 +1,29 @@
 "use client"
 
-import React from "react"
-
-import { useState, useCallback } from "react"
+import React, { useState, useCallback } from "react"
 import { toast } from "sonner"
-import { Stethoscope, Plus, ClipboardList, Search, X, RefreshCw, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react"
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  addDoc,
+  doc,
+  updateDoc,
+} from "firebase/firestore"
+import { db } from "@/src/config/firebase"
+import {
+  Stethoscope,
+  Plus,
+  ClipboardList,
+  Search,
+  X,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Loader2,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -13,11 +32,29 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { RiskDisplay } from "@/components/risk/risk-display"
-import { getPatientList, runRiskAssessment, submitPrescription, getDoctorPrescriptions, getDoctorRefillRequests, approveRefillRequest, rejectRefillRequest } from "@/lib/actions"
-import type { RiskAssessment, Prescription, MedicationItem, RefillRequest } from "@/lib/types"
+import { runRiskAssessment } from "@/lib/actions"
+import type {
+  Prescription,
+  MedicationItem,
+  RefillRequest,
+  PrescribedMedication,
+  RiskAssessmentResult,
+} from "@/lib/types"
 import useSWR, { useSWRConfig } from "swr"
+
+type DoctorContext = {
+  id: string
+  name: string
+}
 
 const AVAILABLE_MEDICATIONS = [
   "Amoxicillin",
@@ -34,44 +71,89 @@ const AVAILABLE_MEDICATIONS = [
   "Prednisone",
 ]
 
+type PatientSummary = {
+  id: string
+  name: string
+  email: string
+  allergies: string[]
+}
+
 function usePatientsData() {
-  return useSWR("doctor-patients", async () => {
-    const res = await getPatientList()
-    if (res.error) throw new Error(res.error)
-    return res.patients || []
+  return useSWR<PatientSummary[]>("doctor-patients", async () => {
+    const q = query(collection(db, "users"), where("role", "==", "patient"))
+    const querySnapshot = await getDocs(q)
+
+    return querySnapshot.docs.map((docSnap) => {
+      const data = docSnap.data() as {
+        name?: string
+        email?: string
+        allergies?: unknown
+      }
+
+      return {
+        id: docSnap.id,
+        name: data.name ?? "",
+        email: data.email ?? "",
+        allergies: Array.isArray(data.allergies)
+          ? data.allergies.filter((a): a is string => typeof a === "string")
+          : [],
+      }
+    })
   })
 }
 
-function usePrescriptionsData() {
-  return useSWR("doctor-prescriptions", async () => {
-    const res = await getDoctorPrescriptions()
-    if (res.error) throw new Error(res.error)
-    return res.prescriptions || []
-  })
+function usePrescriptionsData(doctorId: string) {
+  return useSWR<Prescription[]>(
+    doctorId ? ["doctor-prescriptions", doctorId] : null,
+    async () => {
+      const q = query(
+        collection(db, "prescriptions"),
+        where("doctorId", "==", doctorId)
+      )
+
+      const snapshot = await getDocs(q)
+
+      return snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<Prescription, "id">),
+      }))
+    }
+  )
 }
 
-function useRefillRequestsData() {
-  return useSWR("doctor-refill-requests", async () => {
-    const res = await getDoctorRefillRequests()
-    if (res.error) throw new Error(res.error)
-    return res.requests || []
-  })
+function useRefillRequestsData(doctorId: string) {
+  return useSWR<RefillRequest[]>(
+    doctorId ? ["doctor-refill-requests", doctorId] : null,
+    async () => {
+      const q = query(
+        collection(db, "refillRequests"),
+        where("doctorId", "==", doctorId),
+        where("status", "==", "pending")
+      )
+
+      const snapshot = await getDocs(q)
+
+      return snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<RefillRequest, "id">),
+      }))
+    }
+  )
 }
 
-export function DoctorDashboard() {
+export function DoctorDashboard({ doctor }: { doctor: DoctorContext }) {
   const { data: patients = [] } = usePatientsData()
-  const { data: prescriptions = [], mutate: mutatePrescriptions } = usePrescriptionsData()
-  const { data: refillRequests = [], mutate: mutateRefillRequests } = useRefillRequestsData()
+  const { data: prescriptions = [], mutate: mutatePrescriptions } = usePrescriptionsData(doctor.id)
+  const { data: refillRequests = [], mutate: mutateRefillRequests } = useRefillRequestsData(doctor.id)
   const { mutate: globalMutate } = useSWRConfig()
 
   const [selectedPatientId, setSelectedPatientId] = useState("")
   const [medications, setMedications] = useState<MedicationItem[]>([{ name: "", dosage: "" }])
   const [notes, setNotes] = useState("")
-  const [riskResult, setRiskResult] = useState<RiskAssessment | null>(null)
+  const [riskResult, setRiskResult] = useState<RiskAssessmentResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [assessing, setAssessing] = useState(false)
-  
-  // Refill request state
+
   const [selectedRefillRequest, setSelectedRefillRequest] = useState<RefillRequest | null>(null)
   const [showRejectDialog, setShowRejectDialog] = useState(false)
   const [rejectionReason, setRejectionReason] = useState("")
@@ -86,7 +168,6 @@ export function DoctorDashboard() {
       updated[index] = { ...updated[index], [field]: value }
       return updated
     })
-    // Clear risk result when medications change
     setRiskResult(null)
   }
 
@@ -101,67 +182,199 @@ export function DoctorDashboard() {
   }
 
   const handleAssessRisk = useCallback(async () => {
-    const medNames = medications.filter((m) => m.name).map((m) => m.name)
-    if (medNames.length === 0 || !selectedPatientId) {
-      toast.error("Select a patient and add at least one medication first")
-      return
-    }
-    setAssessing(true)
-    try {
-      const res = await runRiskAssessment(medNames, selectedPatientId)
-      if (res.error) {
-        toast.error(res.error)
-      } else if (res.assessment) {
-        setRiskResult(res.assessment)
-        if (res.assessment.level === "High") {
-          toast.warning("High risk detected. Review alerts before confirming.")
-        }
+  const medsForAssessment = medications
+    .filter((m) => m.name)
+    .map((m) => ({
+      name: m.name,
+      dosage: m.dosage,
+    }))
+
+  if (medsForAssessment.length === 0 || !selectedPatientId) {
+    toast.error("Select a patient and add at least one medication first")
+    return
+  }
+
+  setAssessing(true)
+  try {
+    const res = await runRiskAssessment(
+      medsForAssessment,
+      selectedPatient?.allergies ?? []
+    )
+
+    if (res.error) {
+      toast.error(res.error)
+    } else if (res.assessment) {
+      setRiskResult(res.assessment)
+
+      if (res.assessment.status === "unsafe") {
+        toast.warning("High risk detected. Review alerts before confirming.")
+      } else if (res.assessment.status === "review") {
+        toast.warning("Potential medication risks found. Please review the alerts.")
+      } else {
+        toast.success("Risk assessment completed.")
       }
-    } finally {
-      setAssessing(false)
     }
-  }, [medications, selectedPatientId])
+  } finally {
+    setAssessing(false)
+  }
+}, [medications, selectedPatientId, selectedPatient])
+
+//Purpose: Doctor confirms a new prescription.
+//Includes risk assessment results in the prescription
+//  record and audit logs for traceability.
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+
+    // Filter out any medications that don't have a name or dosage before submitting
     const validMeds = medications.filter((m) => m.name && m.dosage)
+
+
+    // Basic validation to ensure a patient is selected and at least one valid medication is added
     if (!selectedPatientId || validMeds.length === 0) {
       toast.error("Please select a patient and add at least one medication with dosage")
       return
     }
+
+    //check if the selected patient still exists in the database.
+    if (!selectedPatient) {
+      toast.error("Patient not found")
+      return
+    }
+
+    // Format medications for storage in the prescription record
+    //each medication is given a unique medId since we're not linking to a master medication database in this prototype. In a production system, you'd typically reference a medication by its ID from a master list rather than storing the name and dosage directly in the prescription record.
+    // 
+    const formattedMeds: PrescribedMedication[] = validMeds.map((m, index) => ({
+      medId: `manual-${index}`,
+      name: m.name,
+      dosage: m.dosage,
+    }))
+
     setLoading(true)
+    //add a new document to the "prescriptions" collection with the prescription details,
     try {
-      const res = await submitPrescription(selectedPatientId, validMeds, notes, riskResult)
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Prescription confirmed successfully")
-        setSelectedPatientId("")
-        setMedications([{ name: "", dosage: "" }])
-        setNotes("")
-        setRiskResult(null)
-        mutatePrescriptions()
-        globalMutate("audit-logs")
-        globalMutate("email-logs")
+      await addDoc(collection(db, "prescriptions"), {
+        doctorId: doctor.id,
+        patientId: selectedPatientId,
+        patientName: selectedPatient.name,
+        medications: formattedMeds,
+        notes,
+        riskAssessment: riskResult,
+        status: "confirmed",
+        createdAt: new Date().toISOString(),
+      })
+
+      await addDoc(collection(db, "auditLogs"), {
+        userId: doctor.id,
+        userName: doctor.name,
+        action: "Prescription Confirmed",
+        details: `Prescription for ${selectedPatient.name}: ${formattedMeds
+          .map((m) => `${m.name} ${m.dosage}`)
+          .join(", ")}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      if (riskResult) {
+        await addDoc(collection(db, "auditLogs"), {
+          userId: doctor.id,
+          userName: doctor.name,
+          action: "Risk Assessment",
+          details: `Risk: ${riskResult.status} for ${formattedMeds
+            .map((m) => `${m.name} ${m.dosage}`)
+            .join(", ")} - ${selectedPatient.name}`,
+          timestamp: new Date().toISOString(),
+        })
       }
+
+      toast.success("Prescription confirmed successfully")
+      setSelectedPatientId("")
+      setMedications([{ name: "", dosage: "" }])
+      setNotes("")
+      setRiskResult(null)
+      mutatePrescriptions()
+      globalMutate("audit-logs")
+      globalMutate("email-logs")
+    } catch (error) {
+      console.error("Submit prescription failed:", error)
+      toast.error("Failed to confirm prescription")
     } finally {
       setLoading(false)
     }
   }
 
-  async function handleApproveRefill(requestId: string) {
-    setProcessingRefill(requestId)
+
+
+// PURPOSE: Doctor approves a pending refill.
+// Auto-creates a new prescription from the refill data.
+// Sends approval email to patient so they can book collection.
+//patient can handle the booking afterwards and choose pickup time and pharmacy,
+//  which will trigger the rest of the workflow.
+  async function handleApproveRefill(request: RefillRequest) {
+    setProcessingRefill(request.id)
+
     try {
-      const res = await approveRefillRequest(requestId)
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Refill request approved! New prescription created.")
-        mutateRefillRequests()
-        mutatePrescriptions()
-        globalMutate("audit-logs")
-        globalMutate("email-logs")
-      }
+      await addDoc(collection(db, "prescriptions"), {
+        doctorId: doctor.id,
+        patientId: request.patientId,
+        patientName: request.patientName,
+        clinicId: "",
+        medications: request.medications,
+        notes: `Refill of previous prescription. Reason: ${request.reason}`,
+        riskAssessment: null,
+        status: "confirmed",
+        createdAt: new Date().toISOString(),
+      })
+
+      await updateDoc(doc(db, "refillRequests", request.id), {
+        status: "approved",
+        rejectionReason: null,
+        respondedAt: new Date().toISOString(),
+      })
+
+      
+
+      const medSummary = request.medications.map((m) => m.name).join(", ")
+
+      await addDoc(collection(db, "auditLogs"), {
+        userId: doctor.id,
+        userName: doctor.name,
+        action: "Refill Approved",
+        details: `Approved refill request ${request.id} for ${request.patientName}: ${medSummary}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      await addDoc(collection(db, "emailLogs"), {
+        to: request.patientEmail,
+        patientName: request.patientName,
+        prescriptionId: request.prescriptionId,
+        type: "refill_approved",
+        subject: "Your Prescription Refill Has Been Approved",
+        body: `Hello ${request.patientName},
+
+Your prescription refill has been approved.
+
+Medications:
+${request.medications.map((m) => `- ${m.name} (${m.dosage})`).join("\n")}
+
+Status: Approved
+
+This is a prototype email record stored in Firestore.`,
+        status: "queued",
+        deliveryMode: "prototype_firestore",
+        createdAt: new Date().toISOString(),
+        createdById: doctor.id,
+        createdByRole: "doctor",
+      })
+
+      toast.success("Refill request approved! New prescription created.")
+      mutateRefillRequests()
+      mutatePrescriptions()
+      globalMutate("audit-logs")
+      globalMutate("email-logs")
+    } catch (error) {
+      console.error("Approve refill failed:", error)
+      toast.error("Failed to approve refill request")
     } finally {
       setProcessingRefill(null)
     }
@@ -173,25 +386,69 @@ export function DoctorDashboard() {
     setShowRejectDialog(true)
   }
 
+  // PURPOSE: Doctor rejects a pending refill request.
+  // Records the rejection reason and sends an email to the patient with the details.
+  // This allows the patient to understand why their refil,
+ 
   async function handleRejectRefill() {
     if (!selectedRefillRequest || !rejectionReason.trim()) {
       toast.error("Please provide a reason for rejection")
       return
     }
+
     setProcessingRefill(selectedRefillRequest.id)
+
     try {
-      const res = await rejectRefillRequest(selectedRefillRequest.id, rejectionReason.trim())
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Refill request declined")
-        setShowRejectDialog(false)
-        setSelectedRefillRequest(null)
-        setRejectionReason("")
-        mutateRefillRequests()
-        globalMutate("audit-logs")
-        globalMutate("email-logs")
-      }
+      await updateDoc(doc(db, "refillRequests", selectedRefillRequest.id), {
+        status: "rejected",
+        rejectionReason: rejectionReason.trim(),
+        respondedAt: new Date().toISOString(),
+      })
+
+      const medSummary = selectedRefillRequest.medications.map((m) => m.name).join(", ")
+
+      await addDoc(collection(db, "auditLogs"), {
+        userId: doctor.id,
+        userName: doctor.name,
+        action: "Refill Rejected",
+        details: `Rejected refill request ${selectedRefillRequest.id} for ${selectedRefillRequest.patientName}: ${medSummary}. Reason: ${rejectionReason.trim()}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      await addDoc(collection(db, "emailLogs"), {
+        to: selectedRefillRequest.patientEmail,
+        patientName: selectedRefillRequest.patientName,
+        prescriptionId: selectedRefillRequest.prescriptionId,
+        type: "refill_rejected",
+        subject: "Your Prescription Refill Request Was Declined",
+        body: `Hello ${selectedRefillRequest.patientName},
+
+Your prescription refill request was declined.
+
+Medications:
+${selectedRefillRequest.medications.map((m) => `- ${m.name} (${m.dosage})`).join("\n")}
+
+Reason:
+${rejectionReason.trim()}
+
+This is a prototype email record stored in Firestore.`,
+        status: "queued",
+        deliveryMode: "prototype_firestore",
+        createdAt: new Date().toISOString(),
+        createdById: doctor.id,
+        createdByRole: "doctor",
+      })
+
+      toast.success("Refill request declined")
+      setShowRejectDialog(false)
+      setSelectedRefillRequest(null)
+      setRejectionReason("")
+      mutateRefillRequests()
+      globalMutate("audit-logs")
+      globalMutate("email-logs")
+    } catch (error) {
+      console.error("Reject refill failed:", error)
+      toast.error("Failed to decline refill request")
     } finally {
       setProcessingRefill(null)
     }
@@ -236,7 +493,13 @@ export function DoctorDashboard() {
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div className="space-y-2">
                     <Label>Patient</Label>
-                    <Select value={selectedPatientId} onValueChange={(v) => { setSelectedPatientId(v); setRiskResult(null) }}>
+                    <Select
+                      value={selectedPatientId}
+                      onValueChange={(v) => {
+                        setSelectedPatientId(v)
+                        setRiskResult(null)
+                      }}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Select a patient" />
                       </SelectTrigger>
@@ -248,7 +511,8 @@ export function DoctorDashboard() {
                         ))}
                       </SelectContent>
                     </Select>
-                    {selectedPatient && selectedPatient.allergies && selectedPatient.allergies.length > 0 && (
+
+                    {!!selectedPatient && selectedPatient.allergies.length > 0 && (
                       <div className="flex flex-wrap items-center gap-1.5 pt-1">
                         <span className="text-xs text-muted-foreground">Allergies:</span>
                         {selectedPatient.allergies.map((a) => (
@@ -260,7 +524,6 @@ export function DoctorDashboard() {
                     )}
                   </div>
 
-                  {/* Medications List */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <Label>Medications ({filledMedications.length} added)</Label>
@@ -269,6 +532,7 @@ export function DoctorDashboard() {
                         Add Medication
                       </Button>
                     </div>
+
                     {medications.map((med, index) => (
                       <div key={index} className="flex items-start gap-2 rounded-lg border border-border p-3">
                         <div className="flex flex-1 flex-col gap-2 sm:flex-row">
@@ -280,7 +544,9 @@ export function DoctorDashboard() {
                               </SelectTrigger>
                               <SelectContent>
                                 {AVAILABLE_MEDICATIONS.map((m) => (
-                                  <SelectItem key={m} value={m}>{m}</SelectItem>
+                                  <SelectItem key={m} value={m}>
+                                    {m}
+                                  </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -294,6 +560,7 @@ export function DoctorDashboard() {
                             />
                           </div>
                         </div>
+
                         {medications.length > 1 && (
                           <Button
                             type="button"
@@ -329,8 +596,13 @@ export function DoctorDashboard() {
                       onClick={handleAssessRisk}
                       disabled={assessing || filledMedications.length === 0 || !selectedPatientId}
                     >
-                      {assessing ? "Assessing..." : `Run Risk Assessment (${filledMedications.length} drug${filledMedications.length !== 1 ? "s" : ""})`}
+                      {assessing
+                        ? "Assessing..."
+                        : `Run Risk Assessment (${filledMedications.length} drug${
+                            filledMedications.length !== 1 ? "s" : ""
+                          })`}
                     </Button>
+
                     <Button type="submit" className="flex-1" disabled={loading}>
                       {loading ? "Confirming..." : "Confirm Prescription"}
                     </Button>
@@ -348,7 +620,8 @@ export function DoctorDashboard() {
                     <Search className="mb-3 h-10 w-10 text-muted-foreground" />
                     <p className="font-medium text-card-foreground">No Risk Assessment Yet</p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Select a patient, add medications, then click &ldquo;Run Risk Assessment&rdquo; to check for allergy conflicts and drug-drug interactions.
+                      Select a patient, add medications, then click &ldquo;Run Risk Assessment&rdquo; to check for
+                      allergy conflicts and drug-drug interactions.
                     </p>
                   </CardContent>
                 </Card>
@@ -370,14 +643,15 @@ export function DoctorDashboard() {
             </Card>
           ) : (
             <div className="space-y-4">
-              {refillRequests.map((request: RefillRequest) => (
+              {refillRequests.map((request) => (
                 <Card key={request.id}>
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
                       <div>
                         <CardTitle className="text-base">{request.patientName}</CardTitle>
                         <CardDescription>
-                          Requested on {new Date(request.createdAt).toLocaleDateString()} at {new Date(request.createdAt).toLocaleTimeString()}
+                          Requested on {new Date(request.createdAt).toLocaleDateString()} at{" "}
+                          {new Date(request.createdAt).toLocaleTimeString()}
                         </CardDescription>
                       </div>
                       <Badge className="bg-[hsl(37,80%,92%)] text-[hsl(37,90%,30%)]">
@@ -386,9 +660,10 @@ export function DoctorDashboard() {
                       </Badge>
                     </div>
                   </CardHeader>
+
                   <CardContent className="space-y-4">
                     <div className="rounded-lg bg-muted p-3">
-                      <p className="text-sm font-medium text-foreground mb-2">Medications Requested:</p>
+                      <p className="mb-2 text-sm font-medium text-foreground">Medications Requested:</p>
                       <div className="space-y-1">
                         {request.medications.map((med, idx) => (
                           <div key={idx} className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -399,16 +674,16 @@ export function DoctorDashboard() {
                         ))}
                       </div>
                     </div>
-                    
+
                     <div className="rounded-lg border border-border p-3">
-                      <p className="text-xs text-muted-foreground mb-1">Patient&apos;s reason for refill:</p>
+                      <p className="mb-1 text-xs text-muted-foreground">Patient&apos;s reason for refill:</p>
                       <p className="text-sm text-foreground">{request.reason}</p>
                     </div>
 
                     <div className="flex gap-2 pt-2">
                       <Button
                         className="flex-1"
-                        onClick={() => handleApproveRefill(request.id)}
+                        onClick={() => handleApproveRefill(request)}
                         disabled={processingRefill === request.id}
                       >
                         {processingRefill === request.id ? (
@@ -418,6 +693,7 @@ export function DoctorDashboard() {
                         )}
                         Approve Refill
                       </Button>
+
                       <Button
                         variant="outline"
                         className="flex-1"
@@ -440,7 +716,6 @@ export function DoctorDashboard() {
         </TabsContent>
       </Tabs>
 
-      {/* Reject Refill Dialog */}
       <Dialog open={showRejectDialog} onOpenChange={setShowRejectDialog}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -449,14 +724,16 @@ export function DoctorDashboard() {
               Please provide a reason for declining this refill request. The patient will be notified.
             </DialogDescription>
           </DialogHeader>
+
           {selectedRefillRequest && (
             <div className="space-y-4">
               <div className="rounded-lg bg-muted p-3">
                 <p className="text-sm font-medium text-foreground">{selectedRefillRequest.patientName}</p>
-                <p className="text-xs text-muted-foreground mt-1">
+                <p className="mt-1 text-xs text-muted-foreground">
                   {selectedRefillRequest.medications.map((m) => m.name).join(", ")}
                 </p>
               </div>
+
               <div className="space-y-2">
                 <Label htmlFor="rejection-reason">Reason for Declining</Label>
                 <Textarea
@@ -469,6 +746,7 @@ export function DoctorDashboard() {
               </div>
             </div>
           )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowRejectDialog(false)}>
               Cancel
@@ -504,9 +782,7 @@ function PrescriptionHistory({ prescriptions }: { prescriptions: Prescription[] 
         <CardContent className="flex flex-col items-center justify-center py-12 text-center">
           <ClipboardList className="mb-3 h-10 w-10 text-muted-foreground" />
           <p className="font-medium text-card-foreground">No Prescriptions Yet</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Create your first prescription to see it here.
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">Create your first prescription to see it here.</p>
         </CardContent>
       </Card>
     )
@@ -551,6 +827,7 @@ function StatusBadge({ status }: { status: string }) {
     collected: "bg-[hsl(152,50%,92%)] text-[hsl(152,60%,25%)]",
     expired: "bg-[hsl(0,70%,95%)] text-destructive",
   }
+
   return (
     <Badge className={`text-xs capitalize ${variants[status] || ""}`}>
       {status.replace("_", " ")}

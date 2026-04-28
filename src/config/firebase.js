@@ -2,10 +2,14 @@
 // TODO: Uncomment and use when ready to integrate Firebase
 // Currently using mock auth service for development
 
-/*
-import { initializeApp, getApps } from "firebase/app"
+
+//import { initializeApp, getApps } from "firebase/app"
 import { getAuth } from "firebase/auth"
+// import { getFirestore } from "firebase/firestore"
+
+import { initializeApp } from "firebase/app"
 import { getFirestore } from "firebase/firestore"
+
 
 const firebaseConfig = {
   apiKey: "AIzaSyCzyz3lIJD_49zC_FFeqQHfidNNxf2ej-w",
@@ -16,16 +20,24 @@ const firebaseConfig = {
   appId: "1:943485661935:web:5d9d6c4aca84e618b4211a",
   measurementId: "G-8J6599Y8JB"
 }
+const app = initializeApp(firebaseConfig)
+const db = getFirestore(app);
+const auth = getAuth(app)
 
-// Initialize Firebase only if it hasn't been initialized
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0]
-
-export const auth = getAuth(app)
-export const db = getFirestore(app)
+export { auth, db }
 export default app
-*/
 
-// Placeholder exports for when Firebase is not configured
-export const auth = null
-export const db = null
-export default null
+
+
+
+// const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0]
+
+// export const auth = getAuth(app)
+// export const db = getFirestore(app)
+// export default app
+
+
+// // Placeholder exports for when Firebase is not configured
+// export const auth = null
+// export const db = null
+// export default null

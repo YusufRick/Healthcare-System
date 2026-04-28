@@ -42,8 +42,8 @@ export function DashboardHeader({ userName, userRole }: DashboardHeaderProps) {
             <Shield className="h-5 w-5 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold leading-tight text-card-foreground">HDS</h1>
-            <p className="text-xs text-muted-foreground">Healthcare Dispensary</p>
+            <h1 className="text-lg font-semibold leading-tight text-card-foreground">SHS</h1>
+            <p className="text-xs text-muted-foreground">SMART Healthcare System</p>
           </div>
         </div>
         <div className="flex items-center gap-4">

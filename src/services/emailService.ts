@@ -1,9 +1,9 @@
 // Email Service using Resend
-// Layered Architecture: Service Layer
+
 
 import { Resend } from "resend"
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+const resend = new Resend("re_GpeszrLW_BMPMbKXoNNKp39wN1NRJQnpB")
 
 // Default sender email - update this to your verified domain
 const FROM_EMAIL = process.env.FROM_EMAIL || "SMART Dispensary <onboarding@resend.dev>"

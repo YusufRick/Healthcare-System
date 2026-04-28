@@ -1,75 +1,87 @@
-import { MedicationItem, RiskAlert } from "../types";
-import { DrugRecord } from "./drugRepository";
+import type { MedicationInput, ValidationIssue } from "@/lib/types"
+import { DrugRecord } from "./drugRepository"
 
-export function validateDosage(
-  medication: MedicationItem,
-  drug: DrugRecord,
-  patientAge?: number
-): RiskAlert[] {
-  const alerts: RiskAlert[] = [];
-
-  if (!medication.dosage) {
-    alerts.push({
-      type: "dosage",
-      severity: "CRITICAL",
-      message: `No dosage provided for ${medication.name}`,
-    });
-    return alerts;
-  }
-
-  const prescribedDose = extractDoseMg(medication.dosage);
-  const maxDose = extractMaxDoseMg(drug);
-
-  if (prescribedDose !== null && maxDose !== null && prescribedDose > maxDose) {
-    alerts.push({
-      type: "dosage",
-      severity: "CRITICAL",
-      message: `Entered dose ${prescribedDose}mg exceeds listed maximum daily dose of ${maxDose}mg for ${medication.name}`,
-    });
-  }
-
-  if (prescribedDose === null) {
-    alerts.push({
-      type: "dosage",
-      severity: "INFO",
-      message: `Could not parse the dosage '${medication.dosage}' for ${medication.name}. Manual review recommended.`,
-    });
-  }
-
-  if (patientAge && patientAge < 12) {
-    alerts.push({
-      type: "age",
-      severity: "WARNING",
-      message: `Use caution prescribing ${medication.name} in paediatric patients`,
-    });
-  }
-
-  return alerts;
+function normalizeUnit(unit: string) {
+  return unit.toLowerCase().replace("μg", "mcg").replace("ug", "mcg")
 }
 
-function extractDoseMg(doseText?: string): number | null {
-  if (!doseText) return null;
-  const lower = doseText.toLowerCase();
-  const match = lower.match(/(\d+(?:\.\d+)?)\s*(mcg|μg|ug|mg|g)/);
-  if (!match) return null;
-  const value = Number(match[1]);
-  const unit = match[2];
-  if (Number.isNaN(value)) return null;
-  if (unit === "g") return value * 1000;
-  if (unit === "mcg" || unit === "μg" || unit === "ug") return value / 1000;
-  return value;
+function convertToMg(value: number, unit: string) {
+  const normalized = normalizeUnit(unit)
+  if (normalized === "mg") return value
+  if (normalized === "g") return value * 1000
+  if (normalized === "mcg") return value / 1000
+  return null
+}
+
+function parseDose(value: string): { amount: number; unit: string } | null {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(mcg|μg|ug|mg|g)$/i)
+  if (!match) return null
+
+  return {
+    amount: Number(match[1]),
+    unit: match[2],
+  }
+}
+
+function extractMaxDoseFromLabelText(text?: string): number | null {
+  if (!text) return null
+
+  const patterns = [
+    /maximum daily dose(?: of)?\s*(\d+(?:\.\d+)?)\s*(mcg|μg|ug|mg|g)/i,
+    /do not exceed\s*(\d+(?:\.\d+)?)\s*(mcg|μg|ug|mg|g)/i,
+    /max(?:imum)?(?: daily)? dose(?: of)?\s*(\d+(?:\.\d+)?)\s*(mcg|μg|ug|mg|g)/i,
+    /not exceed\s*(\d+(?:\.\d+)?)\s*(mcg|μg|ug|mg|g)/i,
+  ]
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (!match) continue
+
+    const value = Number(match[1])
+    const unit = match[2]
+    const mg = convertToMg(value, unit)
+    if (mg !== null) return mg
+  }
+
+  return null
 }
 
 function extractMaxDoseMg(drug: DrugRecord): number | null {
   if (drug.max_daily_dose_mg) {
-    const parsed = Number(drug.max_daily_dose_mg);
-    return Number.isNaN(parsed) ? null : parsed;
+    const value = Number(drug.max_daily_dose_mg)
+    if (!Number.isNaN(value)) return value
   }
+
   if (drug.max_daily_dose) {
-    return extractDoseMg(drug.max_daily_dose);
+    const parsed = parseDose(drug.max_daily_dose)
+    if (parsed) {
+      return convertToMg(parsed.amount, parsed.unit)
+    }
   }
+
   if (drug.max_daily_dose_text) {
-    return extractDoseMg(drug.max_daily_dose_text);
+    return extractMaxDoseFromLabelText(drug.max_daily_dose_text)
   }
-  return null;
+
+  return null
+}
+
+export function validateDosage(medication: MedicationInput, drug: DrugRecord): ValidationIssue | null {
+  const prescribed = parseDose(medication.dosage)
+  if (!prescribed) return null
+
+  const prescribedMg = convertToMg(prescribed.amount, prescribed.unit)
+  if (prescribedMg === null) return null
+
+  const maxDoseMg = extractMaxDoseMg(drug)
+  if (maxDoseMg === null) return null
+
+  if (prescribedMg <= maxDoseMg) return null
+
+  return {
+    code: "DOSAGE_EXCEEDS_MAX",
+    severity: "high",
+    message: `${medication.name} dosage (${medication.dosage}) exceeds the maximum known daily dose.`,
+    medicationName: medication.name,
+  }
 }

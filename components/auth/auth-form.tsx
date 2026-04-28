@@ -1,8 +1,6 @@
 "use client"
 
-import React from "react"
-
-import { useState } from "react"
+import React, { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Shield, LogIn, UserPlus } from "lucide-react"
 import { toast } from "sonner"
@@ -51,8 +49,10 @@ export function AuthForm() {
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
+
     try {
       const result = await login(loginEmail, loginPassword)
+
       if (result.error) {
         toast.error(result.error)
       } else if (result.user) {
@@ -68,8 +68,16 @@ export function AuthForm() {
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
+
     try {
-      const result = await register(regName, regEmail, regPassword, regRole, regAllergies)
+      const result = await register(
+        regName,
+        regEmail,
+        regPassword,
+        regRole,
+        regAllergies
+      )
+
       if (result.error) {
         toast.error(result.error)
       } else if (result.user) {
@@ -84,8 +92,10 @@ export function AuthForm() {
 
   async function handleDemoLogin(email: string, password: string) {
     setLoading(true)
+
     try {
       const result = await login(email, password)
+
       if (result.error) {
         toast.error(result.error)
       } else if (result.user) {
@@ -112,7 +122,9 @@ export function AuthForm() {
             <Shield className="h-7 w-7 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Healthcare Dispensary System</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">
+              Healthcare Dispensary System
+            </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Secure prescription management with AI-assisted risk assessment
             </p>
@@ -148,6 +160,7 @@ export function AuthForm() {
                       value={loginEmail}
                       onChange={(e) => setLoginEmail(e.target.value)}
                       required
+                      disabled={loading}
                     />
                   </div>
                   <div className="space-y-2">
@@ -159,6 +172,7 @@ export function AuthForm() {
                       value={loginPassword}
                       onChange={(e) => setLoginPassword(e.target.value)}
                       required
+                      disabled={loading}
                     />
                   </div>
                   <Button type="submit" className="w-full" disabled={loading}>
@@ -172,6 +186,7 @@ export function AuthForm() {
                     {DEMO_ACCOUNTS.map((acc) => (
                       <Button
                         key={acc.email}
+                        type="button"
                         variant="outline"
                         size="sm"
                         className="text-xs bg-transparent"
@@ -203,6 +218,7 @@ export function AuthForm() {
                       value={regName}
                       onChange={(e) => setRegName(e.target.value)}
                       required
+                      disabled={loading}
                     />
                   </div>
                   <div className="space-y-2">
@@ -214,6 +230,7 @@ export function AuthForm() {
                       value={regEmail}
                       onChange={(e) => setRegEmail(e.target.value)}
                       required
+                      disabled={loading}
                     />
                   </div>
                   <div className="space-y-2">
@@ -225,11 +242,16 @@ export function AuthForm() {
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
                       required
+                      disabled={loading}
                     />
                   </div>
                   <div className="space-y-2">
                     <Label>Role</Label>
-                    <Select value={regRole} onValueChange={(v) => setRegRole(v as UserRole)}>
+                    <Select
+                      value={regRole}
+                      onValueChange={(v) => setRegRole(v as UserRole)}
+                      disabled={loading}
+                    >
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -252,6 +274,7 @@ export function AuthForm() {
                               id={`allergy-${allergy}`}
                               checked={regAllergies.includes(allergy)}
                               onCheckedChange={() => toggleAllergy(allergy)}
+                              disabled={loading}
                             />
                             <label htmlFor={`allergy-${allergy}`} className="text-sm">
                               {allergy}

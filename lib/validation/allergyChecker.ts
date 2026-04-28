@@ -1,48 +1,49 @@
-import { RiskAlert } from "../types";
-import { DrugRecord, getDrugAllergyTags, getDrugContraindications, tokenizeList } from "./drugRepository";
+import type { MedicationInput, ValidationIssue } from "@/lib/types"
+import {
+  DrugRecord,
+  getDrugAllergyTags,
+  getDrugContraindications,
+  tokenizeList,
+} from "./drugRepository"
 
 function normalize(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-function matchesAnyTerm(haystack: string[], needle: string) {
-  const target = normalize(needle);
-  return haystack.some((term) => term === target || term.includes(target) || target.includes(term));
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
 }
 
 export function checkAllergies(
-  prescribedDrugs: DrugRecord[],
-  patientAllergies?: string[]
-): RiskAlert[] {
-  const alerts: RiskAlert[] = [];
+  medication: MedicationInput,
+  drug: DrugRecord,
+  patientAllergies: string[]
+): ValidationIssue[] {
+  if (!patientAllergies.length) return []
 
-  if (!patientAllergies || patientAllergies.length === 0) {
-    return alerts;
+  const normalizedPatientAllergies = patientAllergies.map((allergy) => normalize(allergy))
+  const drugAllergyTags = getDrugAllergyTags(drug)
+  const drugContraindications = getDrugContraindications(drug)
+  const warningTerms = tokenizeList(
+    [drug.warnings, drug.warnings_and_cautions].filter(Boolean).join(" | ")
+  )
+
+  const issues: ValidationIssue[] = []
+
+  for (const allergy of normalizedPatientAllergies) {
+    const directMatch = drugAllergyTags.some((tag) => tag.includes(allergy) || allergy.includes(tag))
+    const contraindicationMatch = drugContraindications.some(
+      (entry) => entry.includes(allergy) || allergy.includes(entry)
+    )
+    const warningMatch = warningTerms.some(
+      (entry) => entry.includes(allergy) || allergy.includes(entry)
+    )
+
+    if (directMatch || contraindicationMatch || warningMatch) {
+      issues.push({
+        code: "ALLERGY_CONFLICT",
+        severity: "high",
+        message: `${medication.name} may conflict with recorded allergy: ${allergy}.`,
+        medicationName: medication.name,
+      })
+    }
   }
 
-  const normalizedAllergies = patientAllergies.flatMap((allergy) => tokenizeList(allergy));
-
-  prescribedDrugs.forEach((drug) => {
-    const allergyTags = getDrugAllergyTags(drug);
-    const contraindications = getDrugContraindications(drug);
-
-    normalizedAllergies.forEach((allergy) => {
-      const allergyMatch = matchesAnyTerm(allergyTags, allergy);
-      const contraindicationMatch = matchesAnyTerm(contraindications, allergy);
-
-      if (allergyMatch || contraindicationMatch) {
-        alerts.push({
-          type: "allergy",
-          severity: "CRITICAL",
-          message: `Potential allergy conflict: ${drug.name} is tagged for ${allergy} sensitivity or lists it as a contraindication.`,
-        });
-      }
-    });
-  });
-
-  return dedupeAlerts(alerts);
-}
-
-function dedupeAlerts(alerts: RiskAlert[]) {
-  return alerts.filter((alert, index) => alerts.findIndex((other) => other.message === alert.message) === index);
+  return issues
 }

@@ -1,7 +1,19 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
+import { onAuthStateChanged } from "firebase/auth"
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  getDoc,
+  addDoc,
+  doc,
+  updateDoc,
+} from "firebase/firestore"
+import { auth, db } from "@/src/config/firebase"
 import {
   User,
   QrCode,
@@ -24,11 +36,23 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { getPatientDashboard, scanQRCode, closeLocker, requestPrescriptionRefill, getPatientRefillRequests, patientBookPrescription } from "@/lib/actions"
-import type { Prescription, Booking, QRCode as QRCodeType, Locker, RefillRequest } from "@/lib/types"
-import useSWR from "swr"
+import type {
+  Prescription,
+  Booking,
+  QRCode as QRCodeType,
+  Locker,
+  RefillRequest,
+} from "@/lib/types"
+import useSWR, { useSWRConfig } from "swr"
 
 const PHARMACIES = [
   "Central Pharmacy - Main Building",
@@ -46,22 +70,6 @@ const TIME_SLOTS = [
   "16:00 - 17:00",
 ]
 
-function usePatientData() {
-  return useSWR("patient-dashboard", async () => {
-    const res = await getPatientDashboard()
-    if (res.error) throw new Error(res.error)
-    return { items: res.items || [], patientName: res.patientName || "" }
-  })
-}
-
-function useRefillRequests() {
-  return useSWR("patient-refill-requests", async () => {
-    const res = await getPatientRefillRequests()
-    if (res.error) throw new Error(res.error)
-    return res.requests || []
-  })
-}
-
 interface PatientItem {
   prescription: Prescription
   booking: Booking | null
@@ -69,19 +77,220 @@ interface PatientItem {
   locker: Locker | null
 }
 
+type PatientDashboardData = {
+  items: PatientItem[]
+  patientName: string
+  patientEmail: string
+}
+
+function parseSlotStart(date: string, slot: string) {
+  const [slotStart] = slot.split(" - ")
+  return new Date(`${date}T${slotStart}:00`)
+}
+
+function parseSlotEnd(date: string, slot: string) {
+  const [, slotEnd] = slot.split(" - ")
+  return new Date(`${date}T${slotEnd}:00`)
+}
+
+function useCurrentPatient() {
+  const [patientId, setPatientId] = useState<string | null>(null)
+  const [patientName, setPatientName] = useState("")
+  const [patientEmail, setPatientEmail] = useState("")
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!firebaseUser) {
+        setPatientId(null)
+        setPatientName("")
+        setPatientEmail("")
+        setLoading(false)
+        return
+      }
+
+      try {
+        const userSnap = await getDoc(doc(db, "users", firebaseUser.uid))
+        if (!userSnap.exists()) {
+          setPatientId(null)
+          setPatientName("")
+          setPatientEmail("")
+          setLoading(false)
+          return
+        }
+
+        const user = userSnap.data() as {
+          role?: string
+          name?: string
+          email?: string
+        }
+
+        if (user.role !== "patient") {
+          setPatientId(null)
+          setPatientName("")
+          setPatientEmail("")
+          setLoading(false)
+          return
+        }
+
+        setPatientId(firebaseUser.uid)
+        setPatientName(user.name || "")
+        setPatientEmail(user.email || firebaseUser.email || "")
+      } catch (error) {
+        console.error("Failed to load patient session:", error)
+        setPatientId(null)
+        setPatientName("")
+        setPatientEmail("")
+      } finally {
+        setLoading(false)
+      }
+    })
+
+    return () => unsubscribe()
+  }, [])
+
+  return { patientId, patientName, patientEmail, loading }
+}
+
+function usePatientData(
+  patientId: string | null,
+  patientName: string,
+  patientEmail: string
+) {
+  return useSWR<PatientDashboardData>(
+    patientId ? ["patient-dashboard", patientId] : null,
+    async () => {
+      const prescriptionQuery = query(
+        collection(db, "prescriptions"),
+        where("patientId", "==", patientId)
+      )
+
+      const prescriptionSnap = await getDocs(prescriptionQuery)
+
+      const prescriptions = prescriptionSnap.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<Prescription, "id">),
+      })) as Prescription[]
+
+      const items = await Promise.all(
+        prescriptions.map(async (prescription) => {
+          const bookingQuery = query(
+            collection(db, "bookings"),
+            where("prescriptionId", "==", prescription.id)
+          )
+          const bookingSnap = await getDocs(bookingQuery)
+
+          const allBookings = bookingSnap.docs.map((docSnap) => ({
+            id: docSnap.id,
+            ...(docSnap.data() as Omit<Booking, "id">),
+          })) as Booking[]
+
+          const sortedBookings = allBookings.sort(
+            (a, b) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          )
+
+          const latestBooking = sortedBookings[0] ?? null
+
+          const activeBooking =
+            sortedBookings.find((b) =>
+              ["pending", "locker_assigned", "ready"].includes(b.status)
+            ) ?? null
+
+          let qr: QRCodeType | null = null
+          let locker: Locker | null = null
+
+          if (activeBooking) {
+            const qrQuery = query(
+              collection(db, "qrCodes"),
+              where("bookingId", "==", activeBooking.id)
+            )
+            const qrSnap = await getDocs(qrQuery)
+
+            if (!qrSnap.empty) {
+              qr = {
+                id: qrSnap.docs[0].id,
+                ...(qrSnap.docs[0].data() as Omit<QRCodeType, "id">),
+              } as QRCodeType
+            }
+
+            const lockerQuery = query(
+              collection(db, "lockers"),
+              where("bookingId", "==", activeBooking.id)
+            )
+            const lockerSnap = await getDocs(lockerQuery)
+
+            if (!lockerSnap.empty) {
+              locker = {
+                id: lockerSnap.docs[0].id,
+                ...(lockerSnap.docs[0].data() as Omit<Locker, "id">),
+              } as Locker
+            }
+          }
+
+          return {
+            prescription,
+            booking: latestBooking,
+            qr,
+            locker,
+          }
+        })
+      )
+
+      return {
+        items: items.sort(
+          (a, b) =>
+            new Date(b.prescription.createdAt).getTime() -
+            new Date(a.prescription.createdAt).getTime()
+        ),
+        patientName,
+        patientEmail,
+      }
+    }
+  )
+}
+
+function useRefillRequests(patientId: string | null) {
+  return useSWR<RefillRequest[]>(
+    patientId ? ["patient-refill-requests", patientId] : null,
+    async () => {
+      const q = query(
+        collection(db, "refillRequests"),
+        where("patientId", "==", patientId)
+      )
+      const snap = await getDocs(q)
+
+      return snap.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<RefillRequest, "id">),
+      })) as RefillRequest[]
+    }
+  )
+}
+
 export function PatientDashboard() {
-  const { data, mutate } = usePatientData()
-  const { data: refillRequests, mutate: mutateRefills } = useRefillRequests()
+  const { mutate: globalMutate } = useSWRConfig()
+  const { patientId, patientName, patientEmail, loading } = useCurrentPatient()
+  const { data, mutate } = usePatientData(patientId, patientName, patientEmail)
+  const { data: refillRequests = [], mutate: mutateRefills } = useRefillRequests(patientId)
+
   const items = data?.items || []
+
   const [scanToken, setScanToken] = useState("")
   const [scanning, setScanning] = useState(false)
-  const [scanResult, setScanResult] = useState<{ success?: boolean; lockerLabel?: string; error?: string } | null>(null)
+  const [scanResult, setScanResult] = useState<{
+    success?: boolean
+    lockerLabel?: string
+    bookingId?: string
+    error?: string
+  } | null>(null)
+
   const [showScanDialog, setShowScanDialog] = useState(false)
   const [showRefillDialog, setShowRefillDialog] = useState(false)
   const [selectedPrescription, setSelectedPrescription] = useState<Prescription | null>(null)
   const [refillReason, setRefillReason] = useState("")
   const [submittingRefill, setSubmittingRefill] = useState(false)
-  
+
   const [showBookingDialog, setShowBookingDialog] = useState(false)
   const [bookingPrescription, setBookingPrescription] = useState<Prescription | null>(null)
   const [pickupDate, setPickupDate] = useState("")
@@ -89,39 +298,263 @@ export function PatientDashboard() {
   const [pharmacyName, setPharmacyName] = useState("")
   const [submittingBooking, setSubmittingBooking] = useState(false)
 
+  const [showQrDialog, setShowQrDialog] = useState(false)
+  const [selectedQrItem, setSelectedQrItem] = useState<PatientItem | null>(null)
+
+  const todayString = useMemo(() => new Date().toISOString().split("T")[0], [])
+
+  function openQrDialog(item: PatientItem) {
+    setSelectedQrItem(item)
+    setShowQrDialog(true)
+  }
+
+// PURPOSE: Patient presents their QR token to collect medication.
+// Validates: token exists, not already used, not expired.
+// On success: marks token used, unlocks the assigned locker.
+// On expiry: marks booking expired, sends rebooking email.
   async function handleScan() {
+
+    //if token is empty, show error and 
+    // return early to avoid unnecessary Firestore queries.
     if (!scanToken.trim()) {
       toast.error("Please enter a QR code token")
       return
     }
+
+    //if patient is not authenticated, show error and return early.
+    if (!patientId) {
+      toast.error("Not authenticated")
+      return
+    }
+
     setScanning(true)
+
+    // The scan process involves multiple steps:
+    // 1. Validate the QR token exists and is valid.
+    // 2. Check if the token has already been used.
+    // 3. Check if the token has expired.
+    // 4. If valid, mark the token as used and unlock the locker.
     try {
-      const res = await scanQRCode(scanToken.trim())
-      if (res.error) {
-        setScanResult({ error: res.error })
-        toast.error(res.error)
-      } else {
-        setScanResult({ success: true, lockerLabel: res.lockerLabel })
-        toast.success(`Locker ${res.lockerLabel} unlocked!`)
-        mutate()
+      const qrQuery = query(
+        collection(db, "qrCodes"),
+        where("token", "==", scanToken.trim()) //fetch the QR code document matching the entered token.
+      )
+      const qrSnap = await getDocs(qrQuery)
+
+      //if no matching QR code is found, show error and return.
+      if (qrSnap.empty) {
+        setScanResult({ error: "Invalid QR code" })
+        toast.error("Invalid QR code")
+        return
       }
+
+      //if QR code is found, extract the data and perform further validations.
+      //  We check if the QR code has already been used or if it has expired.
+      const qrDoc = qrSnap.docs[0]
+      const qr = {
+        id: qrDoc.id,
+        ...(qrDoc.data() as Omit<QRCodeType, "id">),
+      } as QRCodeType
+
+      if (qr.used) {
+        setScanResult({ error: "This QR code has already been used" })
+        toast.error("This QR code has already been used")
+        return
+      }
+
+      // Check if the QR code has expired by comparing the current time with the expiresAt field.
+      if (new Date(qr.expiresAt) < new Date()) {
+        const bookingRef = doc(db, "bookings", qr.bookingId)
+        const bookingSnap = await getDoc(bookingRef)
+
+        if (bookingSnap.exists()) {
+          const booking = {
+            id: bookingSnap.id,
+            ...(bookingSnap.data() as Omit<Booking, "id">),
+          } as Booking
+
+          await updateDoc(bookingRef, { status: "expired" })
+
+          if (booking.prescriptionId) {
+            await updateDoc(doc(db, "prescriptions", booking.prescriptionId), {
+              status: "confirmed",
+            })
+          }
+
+          //sends an email to the patient notifying them of the expiry and prompting them to rebook.
+          await addDoc(collection(db, "emailLogs"), {
+            to: booking.patientEmail,
+            bookingId: booking.id,
+            prescriptionId: booking.prescriptionId,
+            type: "expired",
+            subject: "QR Code Expired - Rebooking Required",
+            body: `Hello ${data?.patientName || "Patient"},
+
+Your QR code for prescription pickup has expired.
+
+Previous booking details:
+- Pharmacy: ${booking.pharmacyName}
+- Pickup time: ${booking.pickupTime}
+
+Please book a new pickup slot from your patient dashboard to receive a new QR token.
+`,
+            status: "queued",
+            deliveryMode: "prototype_firestore",
+            createdAt: new Date().toISOString(),
+            createdById: patientId,
+            createdByRole: "patient",
+          })
+        }
+
+        // If the QR code has expired,
+        // we mark the booking as expired and send an email to the patient.
+
+        setScanResult({ error: "QR code has expired. Please rebook." })
+        toast.error("QR code has expired. Please rebook.")
+        mutate()
+        globalMutate("email-logs")
+        return
+      }
+
+      await updateDoc(doc(db, "qrCodes", qr.id), { used: true })
+
+      // After validating the QR code,
+      // we fetch the associated booking to get details like the assigned locker.
+
+      const bookingSnap = await getDoc(doc(db, "bookings", qr.bookingId))
+      if (!bookingSnap.exists()) {
+        setScanResult({ error: "Booking not found" })
+        toast.error("Booking not found")
+        return
+      }
+
+      const booking = {
+        id: bookingSnap.id,
+        ...(bookingSnap.data() as Omit<Booking, "id">),
+      } as Booking
+
+
+      // We check if the booking status is still valid for collection
+      //  (e.g., "locker_assigned" or "ready").
+      if (!["locker_assigned", "ready"].includes(booking.status)) {
+        setScanResult({ error: "This booking is not ready for collection yet" })
+        toast.error("This booking is not ready for collection yet")
+        return
+      }
+
+      const lockerQuery = query(
+        collection(db, "lockers"),
+        where("bookingId", "==", booking.id)
+      )
+      const lockerSnap = await getDocs(lockerQuery)
+
+      let lockerLabel = "Unknown"
+      if (!lockerSnap.empty) {
+        const lockerDoc = lockerSnap.docs[0]
+        const locker = {
+          id: lockerDoc.id,
+          ...(lockerDoc.data() as Omit<Locker, "id">),
+        } as Locker
+
+        lockerLabel = locker.label
+
+        await updateDoc(doc(db, "lockers", locker.id), {
+          status: "unlocked",
+        })
+
+        await addDoc(collection(db, "auditLogs"), {
+          userId: patientId,
+          userName: data?.patientName || "Patient",
+          action: "Locker Accessed",
+          details: `Locker ${locker.label} unlocked for booking ${booking.id}`,
+          timestamp: new Date().toISOString(),
+        })
+      }
+
+      setScanResult({
+        success: true,
+        lockerLabel,
+        bookingId: booking.id,
+      })
+      toast.success(`Locker ${lockerLabel} unlocked!`)
+      mutate()
+      globalMutate("audit-logs")
+    } catch (error) {
+      console.error("Scan failed:", error)
+      toast.error("Failed to validate QR code")
     } finally {
       setScanning(false)
     }
   }
 
   async function handleCloseLocker(bookingId: string) {
+    if (!patientId) {
+      toast.error("Not authenticated")
+      return
+    }
+
+    //updates the booking status to "collected"
+    //  and locker status to "available" after the patient
+    //  has collected their medication and closed the locker.
     try {
-      const res = await closeLocker(bookingId)
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Locker closed. Medication collected successfully!")
-        setScanResult(null)
-        setScanToken("")
-        mutate()
+      const bookingRef = doc(db, "bookings", bookingId)
+      const bookingSnap = await getDoc(bookingRef)
+      if (!bookingSnap.exists()) {
+        toast.error("Booking not found")
+        return
       }
-    } catch {
+
+      const booking = {
+        id: bookingSnap.id,
+        ...(bookingSnap.data() as Omit<Booking, "id">),
+      } as Booking
+
+      await updateDoc(bookingRef, {
+        status: "collected",
+      })
+
+      if (booking.prescriptionId) {
+        await updateDoc(doc(db, "prescriptions", booking.prescriptionId), {
+          status: "collected",
+        })
+      }
+
+      const lockerQuery = query(
+        collection(db, "lockers"),
+        where("bookingId", "==", bookingId)
+      )
+      const lockerSnap = await getDocs(lockerQuery)
+
+      if (!lockerSnap.empty) {
+        const lockerDoc = lockerSnap.docs[0]
+        const locker = {
+          id: lockerDoc.id,
+          ...(lockerDoc.data() as Omit<Locker, "id">),
+        } as Locker
+
+        //set the locker status to "available" and 
+        // remove the bookingId to indicate it's ready for the next use.
+        await updateDoc(doc(db, "lockers", locker.id), {
+          status: "available",
+          bookingId: null,
+        })
+
+        await addDoc(collection(db, "auditLogs"), {
+          userId: patientId,
+          userName: data?.patientName || "Patient",
+          action: "Locker Closed",
+          details: `Locker ${locker.label} released after collection for booking ${bookingId}`,
+          timestamp: new Date().toISOString(),
+        })
+      }
+
+      toast.success("Locker closed. Medication collected successfully!")
+      setScanResult(null)
+      setScanToken("")
+      mutate()
+      globalMutate("audit-logs")
+    } catch (error) {
+      console.error("Close locker failed:", error)
       toast.error("Failed to close locker")
     }
   }
@@ -141,47 +574,213 @@ export function PatientDashboard() {
   }
 
   async function handleSubmitBooking() {
+    if (!patientId) {
+      toast.error("Not authenticated")
+      return
+    }
+
     if (!bookingPrescription || !pickupDate || !pickupTime || !pharmacyName) {
       toast.error("Please fill in all fields")
       return
     }
+
+    const slotStart = parseSlotStart(pickupDate, pickupTime)
+
+    if (slotStart.getTime() <= Date.now()) {
+      toast.error("Please choose a pickup time slot that has not passed")
+      return
+    }
+
+    const emailToUse = data?.patientEmail || patientEmail
+
+    if (!emailToUse) {
+      toast.error("Patient email is missing")
+      return
+    }
+
     setSubmittingBooking(true)
     try {
       const formattedPickup = `${pickupDate} ${pickupTime}`
-      const res = await patientBookPrescription(bookingPrescription.id, formattedPickup, pharmacyName)
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Pickup booked successfully!")
-        setShowBookingDialog(false)
-        setBookingPrescription(null)
-        mutate()
+
+      const existingBookingQuery = query(
+        collection(db, "bookings"),
+        where("prescriptionId", "==", bookingPrescription.id)
+      )
+      const existingBookingSnap = await getDocs(existingBookingQuery)
+
+      const existingBookings = existingBookingSnap.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<Booking, "id">),
+      })) as Booking[]
+
+      const hasActiveBooking = existingBookings.some((b) =>
+        ["pending", "locker_assigned", "ready"].includes(b.status)
+      )
+
+      if (hasActiveBooking) {
+        toast.error("This prescription already has an active booking")
+        return
       }
-    } catch {
+
+      const bookingRef = await addDoc(collection(db, "bookings"), {
+        prescriptionId: bookingPrescription.id,
+        patientEmail: emailToUse,
+        pickupTime: formattedPickup,
+        pharmacyName,
+        createdById: patientId,
+        createdByRole: "patient",
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      })
+
+      const expiresAt = parseSlotEnd(pickupDate, pickupTime)
+      expiresAt.setMinutes(expiresAt.getMinutes() + 30)
+
+      const qrToken =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+
+      await addDoc(collection(db, "qrCodes"), {
+        bookingId: bookingRef.id,
+        token: qrToken,
+        expiresAt: expiresAt.toISOString(),
+        used: false,
+        createdAt: new Date().toISOString(),
+      })
+
+      await updateDoc(doc(db, "prescriptions", bookingPrescription.id), {
+        status: "booked",
+      })
+
+      const emailBody = `Hello ${data?.patientName || "Patient"},
+
+Your prescription pickup booking has been created successfully.
+
+Booking details:
+- Pickup time: ${formattedPickup}
+- Pharmacy: ${pharmacyName}
+- Booking status: Booked
+
+QR token to unlock locker:
+${qrToken}
+
+QR expiry:
+${expiresAt.toLocaleString()}
+
+Instructions:
+Use this QR token when collecting your prescription to unlock the locker.
+`
+
+      await addDoc(collection(db, "emailLogs"), {
+        to: emailToUse,
+        patientName: data?.patientName || "",
+        bookingId: bookingRef.id,
+        prescriptionId: bookingPrescription.id,
+        type: "booking_confirmation",
+        subject: "Prescription Pickup Booking Confirmed",
+        body: emailBody,
+        qrToken,
+        pickupTime: formattedPickup,
+        pharmacyName,
+        status: "queued",
+        deliveryMode: "prototype_firestore",
+        createdAt: new Date().toISOString(),
+        createdById: patientId,
+        createdByRole: "patient",
+      })
+
+      await addDoc(collection(db, "auditLogs"), {
+        userId: patientId,
+        userName: data?.patientName || "Patient",
+        action: "Patient Booking",
+        details: `Booked prescription ${bookingPrescription.id} at ${pharmacyName}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      toast.success("Pickup booked successfully!")
+      setShowBookingDialog(false)
+      setBookingPrescription(null)
+      setPickupDate("")
+      setPickupTime("")
+      setPharmacyName("")
+      mutate()
+      globalMutate("email-logs")
+      globalMutate("audit-logs")
+    } catch (error) {
+      console.error("Booking failed:", error)
       toast.error("Failed to book pickup")
     } finally {
       setSubmittingBooking(false)
     }
   }
 
+
+
+// PURPOSE: Submits a refill request to the original doctor.
+// Includes a duplicate check to prevents multiple pending requests
+// for the same prescription from the same patient.
   async function handleSubmitRefill() {
+    if (!patientId) {
+      toast.error("Not authenticated")
+      return
+    }
+
     if (!selectedPrescription || !refillReason.trim()) {
       toast.error("Please provide a reason for the refill request")
       return
     }
+
     setSubmittingRefill(true)
+
     try {
-      const res = await requestPrescriptionRefill(selectedPrescription.id, refillReason.trim())
-      if (res.error) {
-        toast.error(res.error)
-      } else {
-        toast.success("Refill request submitted successfully!")
-        setShowRefillDialog(false)
-        setSelectedPrescription(null)
-        setRefillReason("")
-        mutateRefills()
+      const existingQuery = query(
+        collection(db, "refillRequests"),
+        where("patientId", "==", patientId),
+        where("prescriptionId", "==", selectedPrescription.id),
+        where("status", "==", "pending")
+      )
+      const existingSnap = await getDocs(existingQuery)
+
+      if (!existingSnap.empty) {
+        toast.error("A refill request is already pending for this prescription")
+        return
       }
-    } catch {
+
+      //adds a new document to the "refillRequests" collection
+      //  with details about the request and reasons provided by the patient.
+      // The request is linked to the original prescription and the doctor who issued it
+      //by including the prescriptionId and doctorId fields.
+      //The status is set to "pending" for the doctor to review.
+
+      await addDoc(collection(db, "refillRequests"), {
+        prescriptionId: selectedPrescription.id,
+        patientId,
+        patientName: selectedPrescription.patientName,
+        patientEmail: data?.patientEmail || patientEmail,
+        doctorId: selectedPrescription.doctorId,
+        medications: selectedPrescription.medications,
+        reason: refillReason.trim(),
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      })
+
+      await addDoc(collection(db, "auditLogs"), {
+        userId: patientId,
+        userName: data?.patientName || "Patient",
+        action: "Refill Requested",
+        details: `Refill request for prescription ${selectedPrescription.id}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      toast.success("Refill request submitted successfully!")
+      setShowRefillDialog(false)
+      setSelectedPrescription(null)
+      setRefillReason("")
+      mutateRefills()
+      globalMutate("audit-logs")
+    } catch (error) {
+      console.error("Refill request failed:", error)
       toast.error("Failed to submit refill request")
     } finally {
       setSubmittingRefill(false)
@@ -189,26 +788,41 @@ export function PatientDashboard() {
   }
 
   function hasPendingRefill(prescriptionId: string): boolean {
-    return refillRequests?.some((r: RefillRequest) => r.prescriptionId === prescriptionId && r.status === "pending") || false
+    return refillRequests.some(
+      (r) => r.prescriptionId === prescriptionId && r.status === "pending"
+    )
   }
 
   function getRefillRequestStatus(prescriptionId: string): RefillRequest | undefined {
-    return refillRequests?.find((r: RefillRequest) => r.prescriptionId === prescriptionId)
+    return refillRequests.find((r) => r.prescriptionId === prescriptionId)
+  }
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-7xl space-y-6 p-6">
+        <Card className="border-dashed">
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <Loader2 className="mb-3 h-10 w-10 animate-spin text-muted-foreground" />
+            <p className="font-medium text-card-foreground">Loading patient dashboard...</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 p-6">
-      <div className="flex items-center justify-between">
+    <div className="mx-auto max-w-7xl space-y-4 p-4 sm:space-y-6 sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <User className="h-6 w-6 text-primary" />
+          <User className="h-5 w-5 text-primary sm:h-6 sm:w-6" />
           <div>
-            <h2 className="text-xl font-semibold text-foreground">Patient Dashboard</h2>
-            <p className="text-sm text-muted-foreground">
+            <h2 className="text-lg font-semibold text-foreground sm:text-xl">{data?.patientName || "Patient"} Dashboard</h2>
+            <p className="text-xs text-muted-foreground sm:text-sm">
               View your prescriptions and collect medication
             </p>
           </div>
         </div>
-        <Button onClick={() => setShowScanDialog(true)}>
+        <Button onClick={() => setShowScanDialog(true)} className="w-full sm:w-auto">
           <QrCode className="mr-1.5 h-4 w-4" />
           Scan QR Code
         </Button>
@@ -238,9 +852,15 @@ export function PatientDashboard() {
             </Button>
 
             {scanResult && (
-              <div className={`rounded-lg p-4 ${scanResult.success ? "bg-[hsl(152,40%,95%)] border border-[hsl(152,60%,40%)]" : "bg-[hsl(0,70%,97%)] border border-destructive"}`}>
+              <div
+                className={`rounded-lg p-4 ${
+                  scanResult.success
+                    ? "border border-[hsl(152,60%,40%)] bg-[hsl(152,40%,95%)]"
+                    : "border border-destructive bg-[hsl(0,70%,97%)]"
+                }`}
+              >
                 {scanResult.success ? (
-                  <div className="text-center space-y-3">
+                  <div className="space-y-3 text-center">
                     <Unlock className="mx-auto h-10 w-10 text-[hsl(152,60%,40%)]" />
                     <div>
                       <p className="font-medium text-[hsl(152,60%,25%)]">Locker Unlocked!</p>
@@ -248,9 +868,19 @@ export function PatientDashboard() {
                         {scanResult.lockerLabel} is now open. Please collect your medication.
                       </p>
                     </div>
+                    {scanResult.bookingId && (
+                      <Button
+                        size="sm"
+                        onClick={() => handleCloseLocker(scanResult.bookingId!)}
+                        className="mt-2"
+                      >
+                        <Lock className="mr-1.5 h-4 w-4" />
+                        Close Locker After Collection
+                      </Button>
+                    )}
                   </div>
                 ) : (
-                  <div className="text-center space-y-2">
+                  <div className="space-y-2 text-center">
                     <XCircle className="mx-auto h-10 w-10 text-destructive" />
                     <p className="font-medium text-destructive">{scanResult.error}</p>
                   </div>
@@ -258,6 +888,54 @@ export function PatientDashboard() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showQrDialog} onOpenChange={setShowQrDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Pickup QR Token</DialogTitle>
+            <DialogDescription>
+              Show this QR token when collecting your medication.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedQrItem?.qr && selectedQrItem?.booking ? (
+            <div className="space-y-4 text-center">
+              <div className="rounded-xl border border-dashed bg-muted p-6">
+                <QrCode className="mx-auto h-16 w-16 text-foreground" />
+                <p className="mt-4 break-all font-mono text-sm text-foreground">
+                  {selectedQrItem.qr.token}
+                </p>
+              </div>
+
+              <div className="space-y-1 text-sm">
+                <p className="text-muted-foreground">
+                  Booking: <span className="font-medium text-foreground">{selectedQrItem.booking.id}</span>
+                </p>
+                <p className="text-muted-foreground">
+                  Pharmacy:{" "}
+                  <span className="font-medium text-foreground">
+                    {selectedQrItem.booking.pharmacyName}
+                  </span>
+                </p>
+                <p className="text-muted-foreground">
+                  Pickup Time:{" "}
+                  <span className="font-medium text-foreground">
+                    {selectedQrItem.booking.pickupTime}
+                  </span>
+                </p>
+                <p className="text-muted-foreground">
+                  Expires:{" "}
+                  <span className="font-medium text-foreground">
+                    {new Date(selectedQrItem.qr.expiresAt).toLocaleString()}
+                  </span>
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No active QR code available.</p>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -285,7 +963,7 @@ export function PatientDashboard() {
                 <Label htmlFor="refill-reason">Reason for Refill</Label>
                 <Textarea
                   id="refill-reason"
-                  placeholder="Please explain why you need a refill (e.g., medication running low, continuing treatment...)"
+                  placeholder="Please explain why you need a refill"
                   value={refillReason}
                   onChange={(e) => setRefillReason(e.target.value)}
                   rows={3}
@@ -334,7 +1012,14 @@ export function PatientDashboard() {
                   ))}
                 </ul>
               </div>
-              
+
+              <div className="rounded-lg bg-muted p-3 text-sm">
+                <p className="text-xs text-muted-foreground">Email</p>
+                <p className="font-medium text-foreground">
+                  {data?.patientEmail || patientEmail || "No email found"}
+                </p>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="pharmacy">Pharmacy</Label>
                 <Select value={pharmacyName} onValueChange={setPharmacyName}>
@@ -361,7 +1046,7 @@ export function PatientDashboard() {
                   type="date"
                   value={pickupDate}
                   onChange={(e) => setPickupDate(e.target.value)}
-                  min={new Date().toISOString().split("T")[0]}
+                  min={todayString}
                 />
               </div>
 
@@ -389,8 +1074,8 @@ export function PatientDashboard() {
             <Button variant="outline" onClick={() => setShowBookingDialog(false)}>
               Cancel
             </Button>
-            <Button 
-              onClick={handleSubmitBooking} 
+            <Button
+              onClick={handleSubmitBooking}
               disabled={submittingBooking || !pickupDate || !pickupTime || !pharmacyName}
             >
               {submittingBooking ? (
@@ -410,13 +1095,13 @@ export function PatientDashboard() {
       </Dialog>
 
       <Tabs defaultValue="prescriptions" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="prescriptions">My Prescriptions</TabsTrigger>
-          <TabsTrigger value="refill-requests">
-            Refill Requests
-            {refillRequests && refillRequests.filter((r: RefillRequest) => r.status === "pending").length > 0 && (
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="prescriptions" className="text-xs sm:text-sm">My Prescriptions</TabsTrigger>
+          <TabsTrigger value="refill-requests" className="text-xs sm:text-sm">
+            Refills
+            {refillRequests.filter((r) => r.status === "pending").length > 0 && (
               <Badge variant="secondary" className="ml-2">
-                {refillRequests.filter((r: RefillRequest) => r.status === "pending").length}
+                {refillRequests.filter((r) => r.status === "pending").length}
               </Badge>
             )}
           </TabsTrigger>
@@ -435,13 +1120,14 @@ export function PatientDashboard() {
             </Card>
           ) : (
             <div className="space-y-4">
-              {items.map((item: PatientItem) => (
+              {items.map((item) => (
                 <PatientPrescriptionCard
                   key={item.prescription.id}
                   item={item}
                   onCloseLocker={handleCloseLocker}
                   onRequestRefill={openRefillDialog}
                   onBookPrescription={openBookingDialog}
+                  onViewQr={openQrDialog}
                   hasPendingRefill={hasPendingRefill(item.prescription.id)}
                   refillRequest={getRefillRequestStatus(item.prescription.id)}
                 />
@@ -451,7 +1137,7 @@ export function PatientDashboard() {
         </TabsContent>
 
         <TabsContent value="refill-requests" className="space-y-4">
-          {!refillRequests || refillRequests.length === 0 ? (
+          {refillRequests.length === 0 ? (
             <Card className="border-dashed">
               <CardContent className="flex flex-col items-center justify-center py-12 text-center">
                 <RefreshCw className="mb-3 h-10 w-10 text-muted-foreground" />
@@ -463,7 +1149,7 @@ export function PatientDashboard() {
             </Card>
           ) : (
             <div className="space-y-4">
-              {refillRequests.map((request: RefillRequest) => (
+              {refillRequests.map((request) => (
                 <RefillRequestCard key={request.id} request={request} />
               ))}
             </div>
@@ -479,6 +1165,7 @@ function PatientPrescriptionCard({
   onCloseLocker,
   onRequestRefill,
   onBookPrescription,
+  onViewQr,
   hasPendingRefill,
   refillRequest,
 }: {
@@ -486,17 +1173,43 @@ function PatientPrescriptionCard({
   onCloseLocker: (bookingId: string) => void
   onRequestRefill: (prescription: Prescription) => void
   onBookPrescription: (prescription: Prescription) => void
+  onViewQr: (item: PatientItem) => void
   hasPendingRefill: boolean
   refillRequest?: RefillRequest
 }) {
-  const { prescription: rx, booking, qr, locker } = item
+  const { prescription: rx, booking, locker, qr } = item
   const canRequestRefill = rx.status === "collected" && !hasPendingRefill
+  const canBookPickup =
+    rx.status === "confirmed" &&
+    (!booking || ["expired", "collected"].includes(booking.status))
+
+  const canViewQr =
+    !!qr &&
+    !!booking &&
+    ["pending", "locker_assigned", "ready"].includes(booking.status) &&
+    !qr.used &&
+    new Date(qr.expiresAt) > new Date()
 
   const statusSteps = [
     { key: "confirmed", label: "Prescribed", icon: CheckCircle2, done: true },
-    { key: "booked", label: "Booked", icon: Clock, done: ["booked", "ready", "collected"].includes(rx.status) },
-    { key: "ready", label: "Ready", icon: Package, done: ["ready", "collected"].includes(rx.status) },
-    { key: "collected", label: "Collected", icon: CheckCircle2, done: rx.status === "collected" },
+    {
+      key: "booked",
+      label: "Booked",
+      icon: Clock,
+      done: ["booked", "ready", "collected"].includes(rx.status),
+    },
+    {
+      key: "ready",
+      label: "Ready",
+      icon: Package,
+      done: ["ready", "collected"].includes(rx.status),
+    },
+    {
+      key: "collected",
+      label: "Collected",
+      icon: CheckCircle2,
+      done: rx.status === "collected",
+    },
   ]
 
   return (
@@ -514,18 +1227,27 @@ function PatientPrescriptionCard({
           <PrescriptionStatusBadge status={rx.status} />
         </div>
       </CardHeader>
+
       <CardContent className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2 sm:flex-nowrap">
           {statusSteps.map((step, i) => {
             const Icon = step.icon
             return (
               <div key={step.key} className="flex items-center gap-1">
-                <div className={`flex items-center gap-1.5 ${step.done ? "text-primary" : "text-muted-foreground"}`}>
-                  <Icon className="h-4 w-4" />
-                  <span className="text-xs font-medium">{step.label}</span>
+                <div
+                  className={`flex items-center gap-1 sm:gap-1.5 ${
+                    step.done ? "text-primary" : "text-muted-foreground"
+                  }`}
+                >
+                  <Icon className="h-3 w-3 sm:h-4 sm:w-4" />
+                  <span className="text-[10px] font-medium sm:text-xs">{step.label}</span>
                 </div>
                 {i < statusSteps.length - 1 && (
-                  <div className={`ml-2 h-px w-8 ${step.done ? "bg-primary" : "bg-border"}`} />
+                  <div
+                    className={`ml-1 h-px w-4 sm:ml-2 sm:w-8 ${
+                      step.done ? "bg-primary" : "bg-border"
+                    }`}
+                  />
                 )}
               </div>
             )
@@ -534,30 +1256,45 @@ function PatientPrescriptionCard({
 
         {booking && (
           <div className="rounded-lg bg-muted p-3 text-sm">
-            <div className="flex items-center gap-4">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4">
               <div>
                 <p className="text-xs text-muted-foreground">Pharmacy</p>
-                <p className="font-medium text-foreground">{booking.pharmacyName}</p>
+                <p className="text-sm font-medium text-foreground">{booking.pharmacyName}</p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Pickup Time</p>
-                <p className="font-medium text-foreground">{booking.pickupTime}</p>
+                <p className="text-sm font-medium text-foreground">{booking.pickupTime}</p>
               </div>
             </div>
           </div>
         )}
 
+        {booking?.status === "expired" && (
+          <div className="rounded-lg border border-destructive bg-[hsl(0,70%,97%)] p-3">
+            <div className="flex items-center gap-2">
+              <XCircle className="h-4 w-4 text-destructive" />
+              <p className="text-sm font-medium text-destructive">
+                Your previous QR code expired. Please book a new pickup slot.
+              </p>
+            </div>
+          </div>
+        )}
+
         {locker && locker.status === "unlocked" && booking && (
-          <div className="rounded-lg bg-[hsl(152,40%,95%)] p-4 border border-[hsl(152,60%,40%)]">
-            <div className="flex items-center justify-between">
+          <div className="rounded-lg border border-[hsl(152,60%,40%)] bg-[hsl(152,40%,95%)] p-3 sm:p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
-                <Unlock className="h-6 w-6 text-[hsl(152,60%,40%)]" />
+                <Unlock className="h-5 w-5 text-[hsl(152,60%,40%)] sm:h-6 sm:w-6" />
                 <div>
-                  <p className="font-medium text-[hsl(152,60%,25%)]">Locker {locker.label} is Open</p>
-                  <p className="text-sm text-[hsl(152,60%,30%)]">Please collect your medication</p>
+                  <p className="text-sm font-medium text-[hsl(152,60%,25%)] sm:text-base">
+                    Locker {locker.label} is Open
+                  </p>
+                  <p className="text-xs text-[hsl(152,60%,30%)] sm:text-sm">
+                    Please collect your medication
+                  </p>
                 </div>
               </div>
-              <Button size="sm" onClick={() => onCloseLocker(booking.id)}>
+              <Button size="sm" onClick={() => onCloseLocker(booking.id)} className="w-full sm:w-auto">
                 <Lock className="mr-1.5 h-4 w-4" />
                 Close Locker
               </Button>
@@ -565,37 +1302,62 @@ function PatientPrescriptionCard({
           </div>
         )}
 
-        {rx.status === "confirmed" && !booking && (
-          <Button variant="outline" className="w-full" onClick={() => onBookPrescription(rx)}>
+        {canViewQr && (
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => onViewQr(item)}
+          >
+            <QrCode className="mr-1.5 h-4 w-4" />
+            View QR
+          </Button>
+        )}
+
+        {canBookPickup && (
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => onBookPrescription(rx)}
+          >
             <CalendarClock className="mr-1.5 h-4 w-4" />
             Book Pickup
           </Button>
         )}
 
         {canRequestRefill && (
-          <Button variant="outline" className="w-full" onClick={() => onRequestRefill(rx)}>
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => onRequestRefill(rx)}
+          >
             <RefreshCw className="mr-1.5 h-4 w-4" />
             Request Refill
           </Button>
         )}
 
         {refillRequest && refillRequest.status === "pending" && (
-          <div className="rounded-lg bg-[hsl(37,80%,95%)] p-3 border border-[hsl(37,80%,60%)]">
+          <div className="rounded-lg border border-[hsl(37,80%,60%)] bg-[hsl(37,80%,95%)] p-3">
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-[hsl(37,90%,30%)]" />
-              <p className="text-sm font-medium text-[hsl(37,90%,25%)]">Refill request pending doctor approval</p>
+              <p className="text-sm font-medium text-[hsl(37,90%,25%)]">
+                Refill request pending doctor approval
+              </p>
             </div>
           </div>
         )}
 
         {refillRequest && refillRequest.status === "rejected" && (
-          <div className="rounded-lg bg-[hsl(0,70%,97%)] p-3 border border-destructive">
+          <div className="rounded-lg border border-destructive bg-[hsl(0,70%,97%)] p-3">
             <div className="flex items-center gap-2">
               <XCircle className="h-4 w-4 text-destructive" />
               <div>
-                <p className="text-sm font-medium text-destructive">Refill request declined</p>
+                <p className="text-sm font-medium text-destructive">
+                  Refill request declined
+                </p>
                 {refillRequest.rejectionReason && (
-                  <p className="text-xs text-muted-foreground mt-1">Reason: {refillRequest.rejectionReason}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Reason: {refillRequest.rejectionReason}
+                  </p>
                 )}
               </div>
             </div>
@@ -612,18 +1374,18 @@ function PrescriptionStatusBadge({ status }: { status: string }) {
     booked: "bg-[hsl(173,40%,92%)] text-[hsl(173,58%,22%)]",
     ready: "bg-[hsl(37,80%,92%)] text-[hsl(37,90%,30%)]",
     collected: "bg-[hsl(152,50%,92%)] text-[hsl(152,60%,25%)]",
+    expired: "bg-[hsl(0,70%,95%)] text-destructive",
   }
+
   const labels: Record<string, string> = {
     confirmed: "Awaiting Booking",
     booked: "Booked",
     ready: "Ready for Pickup",
     collected: "Collected",
+    expired: "Expired",
   }
-  return (
-    <Badge className={variants[status] || ""}>
-      {labels[status] || status}
-    </Badge>
-  )
+
+  return <Badge className={variants[status] || ""}>{labels[status] || status}</Badge>
 }
 
 function RefillRequestCard({ request }: { request: RefillRequest }) {
@@ -632,6 +1394,7 @@ function RefillRequestCard({ request }: { request: RefillRequest }) {
     approved: "bg-[hsl(152,50%,92%)] text-[hsl(152,60%,25%)]",
     rejected: "bg-[hsl(0,70%,95%)] text-destructive",
   }
+
   const statusLabels: Record<string, string> = {
     pending: "Pending Review",
     approved: "Approved",
@@ -647,7 +1410,7 @@ function RefillRequestCard({ request }: { request: RefillRequest }) {
               {request.medications.map((m) => m.name).join(", ")}
             </p>
             <p className="text-sm text-muted-foreground">
-              Requested: {new Date(request.requestedAt).toLocaleDateString()}
+              Requested: {new Date(request.createdAt).toLocaleDateString()}
             </p>
             <p className="text-sm text-muted-foreground">Reason: {request.reason}</p>
           </div>
@@ -655,8 +1418,9 @@ function RefillRequestCard({ request }: { request: RefillRequest }) {
             {statusLabels[request.status]}
           </Badge>
         </div>
+
         {request.status === "rejected" && request.rejectionReason && (
-          <div className="mt-3 rounded-lg bg-[hsl(0,70%,97%)] p-2 border border-destructive">
+          <div className="mt-3 rounded-lg border border-destructive bg-[hsl(0,70%,97%)] p-2">
             <p className="text-sm text-destructive">
               <span className="font-medium">Reason:</span> {request.rejectionReason}
             </p>
